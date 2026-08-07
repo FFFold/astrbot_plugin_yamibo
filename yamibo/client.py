@@ -128,6 +128,17 @@ class ForumClient:
             return None
         return self._solver.solve_script(script)
 
+    async def _read_text(self, resp: aiohttp.ClientResponse) -> str:
+        raw = await resp.read()
+        if resp.charset:
+            return raw.decode(resp.charset, errors="replace")
+        for enc in ("utf-8", "gbk"):
+            try:
+                return raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return raw.decode("utf-8", errors="replace")
+
     async def get_text(self, path: str, *, retry_waf: bool = True) -> str:
         assert self._session is not None
         if self._nox_token is None or time.monotonic() - self._token_solved_at > TOKEN_TTL:
@@ -139,7 +150,7 @@ class ForumClient:
             resp = await self._session.get(url)
             if resp.status == 405:
                 raise WafError("WAF challenge 求解后仍返回 405，cookie 可能已失效")
-        return await resp.text()
+        return await self._read_text(resp)
 
     @staticmethod
     def is_logged_in(html: str) -> bool:
