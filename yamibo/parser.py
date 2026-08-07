@@ -152,3 +152,45 @@ def parse_thread(html: str, tid: int, *, skip_hidden: bool = True) -> ThreadCont
         author_name=first_floor.author_name if first_floor else "",
         floors=floors,
     )
+
+
+def parse_search_results(html: str) -> list[ThreadSummary]:
+    soup = BeautifulSoup(html, "html.parser")
+    items: list[ThreadSummary] = []
+    for li in soup.select("#searchresult li.pbw"):
+        a = li.select_one("h3 a")
+        if not a:
+            continue
+        href = a.get("href") or ""
+        m = re.search(r"tid=(\d+)", href)
+        if not m:
+            continue
+        info = li.select_one("p.xg1")
+        info_text = info.get_text() if info else ""
+        reply_m = re.search(r"(\d+)\s*个回复", info_text)
+        view_m = re.search(r"(\d+)\s*次查看", info_text)
+        time_el = li.select_one("p span")
+        items.append(
+            ThreadSummary(
+                tid=int(m.group(1)),
+                title=a.get_text(strip=True),
+                last_reply_time=time_el.get_text(strip=True) if time_el else "",
+                reply_count=int(reply_m.group(1)) if reply_m else 0,
+                view_count=int(view_m.group(1)) if view_m else 0,
+            )
+        )
+    return items
+
+
+def parse_my_records(html: str) -> dict:
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.select_one("table.dt.mtm")
+    rows = table.select("tbody tr") if table else []
+    result = {"count": 0, "last_time": "", "last_reward": ""}
+    if len(rows) > 1:
+        cells = rows[1].find_all("td")
+        if cells:
+            result["count"] = max(0, len(rows) - 1)
+            result["last_time"] = cells[0].get_text(strip=True)
+            result["last_reward"] = cells[1].get_text(strip=True)
+    return result

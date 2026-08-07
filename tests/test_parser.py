@@ -4,7 +4,9 @@ from yamibo.parser import (
     extract_formhash,
     parse_forum_threads,
     parse_hot_homepage,
+    parse_my_records,
     parse_ranklist,
+    parse_search_results,
     parse_sign_status,
     parse_thread,
 )
@@ -154,3 +156,42 @@ def test_parse_thread_hidden_content_skipped():
 def test_parse_thread_not_logged_in():
     tc = parse_thread(THREAD_NO_LOGIN, tid=1)
     assert len(tc.floors) == 0
+
+
+SEARCH_RESULT = """
+<div id="searchresult">
+<li class="pbw" id="519989">
+<h3 class="xs3"><a href="forum.php?mod=viewthread&amp;tid=519989&amp;highlight=百合" target="_blank">中文<strong>百合</strong>漫画区汇总</a></h3>
+<p class="xg1">138 个回复 - 119 次查看</p>
+<p>图源：浮沫fumo</p>
+<p><span>2026-8-7 17:00</span></p>
+</li>
+<li class="pbw" id="574689">
+<h3 class="xs3"><a href="forum.php?mod=viewthread&amp;tid=574689&amp;highlight=百合" target="_blank">【百合吧汉化组】Baby On Board</a></h3>
+<p class="xg1">1 个回复 - 74 次查看</p>
+</li>
+</div>
+"""
+
+MY_RECORDS = """
+<table class="dt mtm">
+<tbody><tr><th width="130">打卡时间</th><th>打卡固定奖励</th><th>打卡前N名奖励</th><th>连续打卡奖励</th><th>用户组额外奖励</th><th>节日额外奖励</th></tr>
+<tr><td>2026-08-07 21:46:04</td><td>1对象</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>2026-08-05 15:02:07</td><td>1对象</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+</tbody></table>
+"""
+
+
+def test_parse_search_results():
+    items = parse_search_results(SEARCH_RESULT)
+    assert len(items) == 2
+    assert items[0].tid == 519989
+    assert items[0].reply_count == 138
+    assert items[1].title.startswith("【百合吧汉化组】")
+
+
+def test_parse_my_records():
+    rec = parse_my_records(MY_RECORDS)
+    assert rec["last_time"] == "2026-08-07 21:46:04"
+    assert rec["last_reward"] == "1对象"
+    assert rec["count"] == 2
