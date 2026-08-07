@@ -1,0 +1,42 @@
+{
+  "saltkey": {
+    "description": "EeqY_2132_saltkey（浏览器 DevTools → Application → Cookies → bbs.yamibo.com 复制，httpOnly 故 document.cookie 取不到）",
+    "type": "string",
+    "default": "",
+    "invisible": true
+  },
+  "auth": {
+    "description": "EeqY_2132_auth",
+    "type": "string",
+    "default": "",
+    "invisible": true
+  },
+  "user_agent": {
+    "description": "请求 UA",
+    "type": "string",
+    "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  },
+  "sign_enable": { "description": "自动签到", "type": "bool", "default": true },
+  "sign_time": { "description": "签到时间 (HH:MM, 东八区)", "type": "string", "default": "10:00" },
+  "hot_push_enable": { "description": "热帖定时推送", "type": "bool", "default": true },
+  "hot_push_interval_min": { "description": "热帖轮询间隔(分钟)", "type": "int", "default": 60 },
+  "hot_push_count": { "description": "每次推送条数", "type": "int", "default": 10 },
+  "sub_check_interval_min": { "description": "订阅轮询间隔(分钟)", "type": "int", "default": 30 },
+  "sub_text_max_len": { "description": "订阅楼层文本截断长度", "type": "int", "default": 2000 },
+  "sub_image_max": { "description": "订阅单楼层最多图片数", "type": "int", "default": 50 },
+  "deliver_mode": {
+    "description": "漫画发送方式: auto(aiocqhttp 合并转发, 其余 PDF)/pdf/merge_forward",
+    "type": "string",
+    "default": "auto",
+    "options": ["auto", "pdf", "merge_forward"]
+  },
+  "max_pages": { "description": "漫画最大页数", "type": "int", "default": 300 },
+  "max_file_size_mb": { "description": "文件超限回退逐张发图(MB)", "type": "int", "default": 45 },
+  "download_concurrency": { "description": "图片并发下载数", "type": "int", "default": 4 },
+  "comic_cooldown_sec": { "description": "漫画命令冷却(秒)", "type": "int", "default": 60 },
+  "search_cooldown_sec": { "description": "搜索冷却(秒)", "type": "int", "default": 30 },
+  "skip_hidden_content": { "description": "跳过隐藏内容([hide]/购买)", "type": "bool", "default": true },
+  "manual_nox_token": { "description": "WAF 求解失败时手动提供 nox_jst_v1 兜底", "type": "string", "default": "" },
+  "notify_auth_fail": { "description": "cookie 失效时通知热帖绑定会话", "type": "bool", "default": false },
+  "proxy": { "description": "HTTP 代理(可选)", "type": "string", "default": "" }
+}

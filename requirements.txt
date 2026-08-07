@@ -1,0 +1,4 @@
+aiohttp>=3.9
+beautifulsoup4>=4.12
+quickjs>=1.19
+img2pdf>=0.5
