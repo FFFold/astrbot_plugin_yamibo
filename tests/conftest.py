@@ -7,6 +7,5 @@ if sys.platform == "win32":
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import pytest
 
 pytest_plugins = ["aiohttp.pytest_plugin"]

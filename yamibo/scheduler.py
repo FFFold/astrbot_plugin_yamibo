@@ -4,8 +4,8 @@ import asyncio
 import logging
 import random
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Awaitable, Callable
 
 from yamibo.parser import parse_thread
 from yamibo.subscriber import Subscriber

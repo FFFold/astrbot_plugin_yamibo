@@ -1,6 +1,6 @@
 import pytest
 
-from yamibo.models import HotItem, SignStatus, Subscription
+from yamibo.models import HotItem, SignStatus
 from yamibo.scheduler import Scheduler
 
 UMO = "aiocqhttp:group:111"

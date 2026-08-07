@@ -1,4 +1,4 @@
-from yamibo.models import HotItem, PostFloor, SignStatus, Subscription, ThreadSummary
+from yamibo.models import PostFloor, SignStatus, Subscription, ThreadSummary
 
 
 def test_thread_summary_fields():

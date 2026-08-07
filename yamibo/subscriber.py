@@ -1,6 +1,5 @@
 """订阅数据维护：多对多、只看楼主游标、热帖目标。存储抽象便于测试与 AstrBot KV 适配。"""
 
-import json
 import time
 import uuid
 from typing import Any

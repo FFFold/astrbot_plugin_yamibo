@@ -1,4 +1,3 @@
-import re
 
 from yamibo.parser import (
     extract_formhash,
