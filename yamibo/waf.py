@@ -63,11 +63,16 @@ var navigator = { userAgent: '__UA__', platform: 'Win32', language: 'zh-CN', lan
   appVersion: '__UA__', vendor: 'Google Inc.', plugins: [], mimeTypes: [], onLine: true,
   cookieEnabled: true, hardwareConcurrency: 8, deviceMemory: 8, maxTouchPoints: 0, webdriver: false };
 var screen = { width: 1920, height: 1080, colorDepth: 24, availWidth: 1920, availHeight: 1040 };
-var history = { pushState: function () {}, replaceState: function () {}, back: function () {}, forward: function () {}, length: 1, state: null };
-var localStorage = { getItem: function () { return null; }, setItem: function () {}, removeItem: function () {}, clear: function () {}, length: 0, key: function () { return null; } };
-var sessionStorage = { getItem: function () { return null; }, setItem: function () {}, removeItem: function () {}, clear: function () {}, length: 0, key: function () { return null; } };
+var history = { pushState: function () {}, replaceState: function () {},
+  back: function () {}, forward: function () {}, length: 1, state: null };
+var localStorage = { getItem: function () { return null; }, setItem: function () {},
+  removeItem: function () {}, clear: function () {}, length: 0, key: function () { return null; } };
+var sessionStorage = { getItem: function () { return null; }, setItem: function () {},
+  removeItem: function () {}, clear: function () {}, length: 0, key: function () { return null; } };
 var performance = { now: function () { return Date.now(); }, timing: { navigationStart: 0 } };
-var crypto = { getRandomValues: function (arr) { for (var i = 0; i < arr.length; i++) { arr[i] = Math.floor(Math.random() * 256); } return arr; } };
+var crypto = { getRandomValues: function (arr) {
+  for (var i = 0; i < arr.length; i++) { arr[i] = Math.floor(Math.random() * 256); }
+  return arr; } };
 var window = this;
 window.__noxExpire = 30; window.__noxDomain = ''; window.__noxImd = 1;
 window.document = document; window.location = location; window.navigator = navigator;
@@ -82,9 +87,18 @@ var clearTimeout = window.clearTimeout; var clearInterval = window.clearInterval
 function btoa(s) { return __b64encode(s); }
 function atob(s) { return __b64decode(s); }
 function TextEncoder() {}
-TextEncoder.prototype.encode = function (s) { var bin = unescape(encodeURIComponent(s)); var arr = []; for (var i = 0; i < bin.length; i++) arr.push(bin.charCodeAt(i)); return arr; };
+TextEncoder.prototype.encode = function (s) {
+  var bin = unescape(encodeURIComponent(s));
+  var arr = [];
+  for (var i = 0; i < bin.length; i++) arr.push(bin.charCodeAt(i));
+  return arr;
+};
 function TextDecoder() {}
-TextDecoder.prototype.decode = function (u8) { var bin = ''; for (var i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]); return decodeURIComponent(escape(bin)); };
+TextDecoder.prototype.decode = function (u8) {
+  var bin = '';
+  for (var i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  return decodeURIComponent(escape(bin));
+};
 function URLSearchParams(init) {
   this._map = {};
   if (typeof init === 'string') { var parts = String(init).replace(/^\?/, '').split('&');
