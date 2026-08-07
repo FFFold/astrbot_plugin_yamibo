@@ -2,11 +2,14 @@ import re
 
 from bs4 import BeautifulSoup
 
-from yamibo.models import HotItem, SignStatus, ThreadSummary
+from yamibo.models import HotItem, PostFloor, SignStatus, ThreadContent, ThreadSummary
 
 TID_RE = re.compile(r"thread-(\d+)-")
 UID_RE = re.compile(r"space-uid-(\d+)\.html")
 FORMHASH_RE = re.compile(r"formhash=([a-f0-9]{8})")
+
+BBS_ORIGIN = "https://bbs.yamibo.com"
+LOGIN_PROMPT_MARKERS = ("您需要登录", "提示信息")
 
 
 def extract_formhash(html: str) -> str | None:
@@ -90,3 +93,62 @@ def parse_forum_threads(html: str) -> list[ThreadSummary]:
             )
         )
     return items
+
+
+def _abs(url: str) -> str:
+    if url.startswith("http"):
+        return url
+    return f"{BBS_ORIGIN}/{url.lstrip('/')}"
+
+
+def parse_thread(html: str, tid: int, *, skip_hidden: bool = True) -> ThreadContent:
+    soup = BeautifulSoup(html, "html.parser")
+    title_el = soup.select_one("#thread_subject")
+    title = title_el.get_text(strip=True) if title_el else ""
+    if not soup.select_one("#postlist") or any(m in html for m in LOGIN_PROMPT_MARKERS):
+        return ThreadContent(tid=tid, title=title, author_uid=0, author_name="")
+    first_floor: PostFloor | None = None
+    floors: list[PostFloor] = []
+    for post in soup.select("#postlist div[id^=post_]"):
+        m = re.search(r"post_(\d+)", post.get("id", ""))
+        if not m:
+            continue
+        pid = int(m.group(1))
+        authi = post.select_one(f"#favatar{pid} .authi")
+        uid_m = UID_RE.search(str(authi)) if authi else None
+        author_name = authi.get_text(strip=True) if authi else ""
+        num_el = post.select_one(f"#postnum{pid} em")
+        floor = int(re.sub(r"\D", "", num_el.get_text())) if num_el else 0
+        time_el = post.select_one(f"#authorposton{pid} span")
+        time_str = time_el.get_text(strip=True) if time_el else ""
+        msg = post.select_one(f"#postmessage_{pid}")
+        if not msg:
+            continue
+        if skip_hidden:
+            for locked in msg.select(".locked, blockquote[class*=lock]"):
+                locked.decompose()
+        text = msg.get_text("\n", strip=True)
+        images: list[str] = []
+        for img in msg.select("img"):
+            src = img.get("zoomfile") or img.get("src")
+            if src and not re.search(r"smiley|static/image|template/", src):
+                images.append(_abs(src))
+        for img in post.select(".pattl img"):
+            src = img.get("zoomfile") or img.get("src")
+            if src:
+                images.append(_abs(src))
+        pf = PostFloor(
+            pid=pid, floor=floor, author_uid=int(uid_m.group(1)) if uid_m else 0,
+            author_name=author_name, time=time_str, text=text, images=images, is_op=(floor == 1),
+        )
+        if floor == 1:
+            first_floor = pf
+        floors.append(pf)
+    if first_floor is not None and not first_floor.is_op:
+        first_floor.is_op = True
+    return ThreadContent(
+        tid=tid, title=title,
+        author_uid=first_floor.author_uid if first_floor else 0,
+        author_name=first_floor.author_name if first_floor else "",
+        floors=floors,
+    )

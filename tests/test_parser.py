@@ -6,6 +6,7 @@ from yamibo.parser import (
     parse_hot_homepage,
     parse_ranklist,
     parse_sign_status,
+    parse_thread,
 )
 
 SIGN_UNSIGNED = """
@@ -95,3 +96,61 @@ def test_parse_forum_threads():
     assert items[0].tid == 574681
     assert items[0].title.startswith("［韩国漫画］")
     assert items[0].author == "KISE"
+
+
+THREAD_PAGE = """
+<div id="postlist">
+<div id="post_1001">
+<table><tr>
+<td><div id="favatar1001" class="pls"><div class="authi"><a href="space-uid-731857.html" target="_blank">crystar23</a></div></div></td>
+<td><div id="postnum1001"><em>1</em></div>
+<div id="authorposton1001"><span>2026-7-27 19:46</span></div>
+<div id="postmessage_1001" class="t_f">
+请支持我们小狗🐟和茉里！
+<img src="data/attachment/forum/202607/27/194631h9ufu5spp2fxn16p.jpg" zoomfile="data/attachment/forum/202607/27/194631h9ufu5spp2fxn16p.jpg" class="zoom">
+</div></td></tr></table>
+</div>
+<div id="post_1002">
+<table><tr>
+<td><div id="favatar1002" class="pls"><div class="authi"><a href="space-uid-9999.html" target="_blank">路人甲</a></div></div></td>
+<td><div id="postnum1002"><em>2</em></div>
+<div id="authorposton1002"><span>2026-7-27 20:00</span></div>
+<div id="postmessage_1002" class="t_f">好耶</div></td></tr></table>
+</div>
+</div>
+"""
+
+THREAD_HIDDEN = """
+<div id="postlist"><div id="post_1001">
+<table><tr><td><div id="favatar1001" class="pls"><div class="authi"><a href="space-uid-731857.html">crystar23</a></div></div></td>
+<td><div id="postnum1001"><em>1</em></div><div id="authorposton1001"><span>2026-7-27 19:46</span></div>
+<div id="postmessage_1001" class="t_f">
+<blockquote class="locked"><p>本帖隐藏的内容需要回复才可以浏览</p></blockquote>
+公开内容
+</div></td></tr></table></div></div>
+"""
+
+THREAD_NO_LOGIN = """<title>提示信息 - 百合会 - Powered by Discuz!</title><div class="alert_error">您需要登录</div>"""
+
+
+def test_parse_thread_floors():
+    tc = parse_thread(THREAD_PAGE, tid=574233)
+    assert len(tc.floors) == 2
+    f0 = tc.floors[0]
+    assert f0.is_op is True
+    assert f0.author_uid == 731857
+    assert f0.floor == 1
+    assert f0.images == ["https://bbs.yamibo.com/data/attachment/forum/202607/27/194631h9ufu5spp2fxn16p.jpg"]
+    assert f0.text.startswith("请支持我们小狗")
+    assert tc.floors[1].is_op is False
+
+
+def test_parse_thread_hidden_content_skipped():
+    tc = parse_thread(THREAD_HIDDEN, tid=1, skip_hidden=True)
+    assert "隐藏的内容" not in tc.floors[0].text
+    assert "公开内容" in tc.floors[0].text
+
+
+def test_parse_thread_not_logged_in():
+    tc = parse_thread(THREAD_NO_LOGIN, tid=1)
+    assert len(tc.floors) == 0
