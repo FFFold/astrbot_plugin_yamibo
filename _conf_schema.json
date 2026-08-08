@@ -4,18 +4,18 @@
     "type": "object",
     "items": {
       "auth": {
-        "description": "EeqY_2132_auth",
+        "description": "EeqY_2132_auth（必填）",
         "hint": "浏览器登录百合会后，DevTools → Application → Cookies → bbs.yamibo.com，复制 EeqY_2132_auth 的值",
+        "obvious_hint": true,
         "type": "string",
-        "default": "",
-        "invisible": true
+        "default": ""
       },
       "saltkey": {
-        "description": "EeqY_2132_saltkey",
+        "description": "EeqY_2132_saltkey（必填）",
         "hint": "httpOnly cookie，document.cookie 取不到，需在 DevTools 的 Cookies 面板中复制 EeqY_2132_saltkey 的值",
+        "obvious_hint": true,
         "type": "string",
-        "default": "",
-        "invisible": true
+        "default": ""
       },
       "user_agent": {
         "description": "请求 UA",
