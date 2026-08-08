@@ -2,6 +2,16 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.1] - 2026-08-08
+
+### 修复
+
+- **QQ 合并转发只发单条**：aiocqhttp 适配器会把一条消息中每个 `Node` 段分别发送一次转发，导致漫画打包的每批节点被拆成多条零散转发；现每批包装为单个 `Comp.Nodes`，一次发送整批 100 节点
+
+### 文档
+
+- 澄清 `comic.workdir` 仅写入**生成的 PDF** 文件（容器共享卷说明），README 与 FAQ 同步
+
 ## [0.1.0] - 2026-08-08
 
 百合会论坛助手首个正式版本。

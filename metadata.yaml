@@ -1,7 +1,7 @@
 name: astrbot_plugin_yamibo
 author: Fold
 desc: 百合会论坛助手：自动签到、热帖推送、漫画/连载帖解析打包、帖子订阅更新推送、浏览与搜索。
-version: "0.1.0"
+version: "0.1.1"
 repo: https://github.com/FFFold/astrbot_plugin_yamibo
 display_name: 百合会论坛助手
 short_desc: 百合会签到、热帖、漫画打包、订阅推送

@@ -7,7 +7,7 @@
 自动签到 · 热帖推送 · 漫画打包 · 订阅追踪 · 浏览搜索
 
 <!-- 版本徽章与 metadata.yaml / pyproject.toml 同步 -->
-![版本](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)
+![版本](https://img.shields.io/badge/version-0.1.1-blue?style=flat-square)
 ![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.9.2-8a2be2?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-2e8b57?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-orange?style=flat-square)
