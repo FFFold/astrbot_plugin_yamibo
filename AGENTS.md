@@ -43,6 +43,6 @@ AstrBot 插件：百合会论坛助手。`main.py` 是 AstrBot 入口（继承 S
 - 修改 `_conf_schema.json` 后需在 AstrBot WebUI 重载插件才重建配置；cookie 字段（auth/saltkey）**不要加 `invisible: true`**（会从 WebUI 消失）
 - `main.py` 顶部必须保留 `sys.path.insert(0, 插件目录)`（否则 AstrBot 加载时 `import yamibo` 失败）
 - 新指令：管理员功能（登录态个人数据：签到/提醒/cookie状态）必须加 `@filter.permission_type(filter.PermissionType.ADMIN)`，其余公开
-- 版本号三处同步：`metadata.yaml` / `pyproject.toml` / `yamibo/__init__.py`；CHANGELOG 只写发布级功能，不写逐条 DEBUG 修复
+- 版本号三处同步：`metadata.yaml` / `pyproject.toml` / `yamibo/__init__.py`
 - 测试：Windows 下 `tests/conftest.py` 已设 WindowsSelectorEventLoopPolicy（aiohttp TestServer 必需，勿删）；ruff 规则 E/F/W/I/UP、line-length 120、tests/ 豁免 E501
 - 用户文档：`README.md`（配置/指令）、`docs/FAQ.md`（常见问题）
