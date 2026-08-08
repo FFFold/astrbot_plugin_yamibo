@@ -289,6 +289,9 @@ class AstrBotPlugin(Star):
             return
         try:
             html = await self.client.get_text(f"/forum.php?mod=viewthread&tid={tid_num}")
+            if not self.client.is_logged_in(html):
+                yield event.plain_result("登录 cookie 已失效，请更新 auth/saltkey 后重试")
+                return
             tc = parse_thread(html, tid_num)
             if not tc.floors:
                 yield event.plain_result("帖子不可见或需要更高权限")
@@ -327,7 +330,10 @@ class AstrBotPlugin(Star):
         async with lock:
             try:
                 yield event.plain_result("正在解析帖子并下载图片，请稍候…")
-                html = await self.client.get_text(f"/forum.php?mod=viewthread&tid={tid_num}&ordertype=1")
+                html = await self.client.get_text(f"/forum.php?mod=viewthread&tid={tid_num}")
+                if not self.client.is_logged_in(html):
+                    yield event.plain_result("登录 cookie 已失效，请更新 auth/saltkey 后重试")
+                    return
                 tc = parse_thread(html, tid_num)
                 urls = tc.op_images()
                 if not urls:
@@ -407,11 +413,30 @@ class AstrBotPlugin(Star):
             yield event.plain_result("无效的 tid 或链接")
             return
         try:
-            html = await self.client.get_text(f"/forum.php?mod=viewthread&tid={tid_num}&ordertype=1")
+            html = await self.client.get_text(f"/forum.php?mod=viewthread&tid={tid_num}")
+            if not self.client.is_logged_in(html):
+                yield event.plain_result("登录 cookie 已失效，无法确认帖子可见性，请更新 auth/saltkey 后重试")
+                return
             tc = parse_thread(html, tid_num)
             if not tc.floors or not tc.author_uid:
-                yield event.plain_result("帖子不可见，无法订阅")
+                yield event.plain_result("帖子不可见或需要更高权限，无法订阅")
                 return
+            mine = await self.subscriber.list_for(event.unified_msg_origin)
+            if any(s.tid == tid_num for s in mine):
+                yield event.plain_result("已在订阅列表中。")
+                return
+            author_html = await self.client.get_thread_author_view(tid_num, tc.author_uid)
+            if not self.client.is_logged_in(author_html):
+                yield event.plain_result("登录 cookie 已失效，请更新 auth/saltkey 后重试")
+                return
+            tc_author = parse_thread(author_html, tid_num)
+            if not tc_author.floors:
+                yield event.plain_result("获取楼主楼层信息失败，请稍后再试")
+                return
+            last = max(f.floor for f in tc_author.floors)
+            if last == 0:  # 楼主仅 1 楼：Discuz 1 楼无楼层号元素，解析为 0
+                last = 1
+            last_pid = max(f.pid for f in tc_author.floors)
             sub = await self.subscriber.subscribe(
                 tid_num, event.unified_msg_origin,
                 title=tc.title or str(tid_num), op_uid=tc.author_uid, op_name=tc.author_name,
@@ -419,8 +444,6 @@ class AstrBotPlugin(Star):
             if sub is None:
                 yield event.plain_result("已在订阅列表中。")
                 return
-            last = max(f.floor for f in tc.floors)
-            last_pid = max(f.pid for f in tc.floors)
             await self.subscriber.update_baseline(tid_num, floor=last, pid=last_pid)
             yield event.plain_result(f"已订阅《{tc.title}》，从楼主最新楼层（L{last}）开始跟踪。")
         except Exception as e:

@@ -12,7 +12,6 @@ RANK_CACHE_NEXT_RE = re.compile(r"下次将于\s*(\d{4})-(\d{1,2})-(\d{1,2})\s+(
 TZ = timezone(timedelta(hours=8))  # 东八区固定偏移（中国无夏令时，避免依赖 tzdata 包）；scheduler 复用此常量
 
 BBS_ORIGIN = "https://bbs.yamibo.com"
-LOGIN_PROMPT_MARKERS = ("您需要登录", "提示信息")
 TIME_PAT_RE = re.compile(r"\d{4}-\d{1,2}-\d{1,2}(?: \d{1,2}:\d{2})?")
 PADDING_TOKEN_RE = re.compile(r"[\s%^&*+~'`\"\-/\\@!?.,;:()\[\]<>_=|{}]+")
 
@@ -159,11 +158,12 @@ def parse_thread(html: str, tid: int, *, skip_hidden: bool = True) -> ThreadCont
     soup = BeautifulSoup(html, "html.parser")
     title_el = soup.select_one("#thread_subject")
     title = title_el.get_text(strip=True) if title_el else ""
-    if not soup.select_one("#postlist") or any(m in html for m in LOGIN_PROMPT_MARKERS):
+    posts = soup.select("#postlist div[id^=post_]")
+    if not posts:
         return ThreadContent(tid=tid, title=title, author_uid=0, author_name="")
     first_floor: PostFloor | None = None
     floors: list[PostFloor] = []
-    for post in soup.select("#postlist div[id^=post_]"):
+    for post in posts:
         m = re.search(r"post_(\d+)", post.get("id", ""))
         if not m:
             continue

@@ -165,6 +165,10 @@ THREAD_HIDDEN = """
 
 THREAD_NO_LOGIN = """<title>提示信息 - 百合会 - Powered by Discuz!</title><div class="alert_error">您需要登录</div>"""
 
+THREAD_GUEST_VIEW = THREAD_PAGE + """
+<div id="postlistreply" class="pl"><div class="pt hm">您需要登录后才可以回帖</div></div>
+"""
+
 
 def test_parse_thread_floors():
     tc = parse_thread(THREAD_PAGE, tid=574233)
@@ -187,6 +191,42 @@ def test_parse_thread_hidden_content_skipped():
 def test_parse_thread_not_logged_in():
     tc = parse_thread(THREAD_NO_LOGIN, tid=1)
     assert len(tc.floors) == 0
+
+
+def test_parse_thread_guest_reply_box_not_invisible():
+    """游客可见的帖子页含有「您需要登录后才可以回帖」回复框，不应误判为不可见。"""
+    tc = parse_thread(THREAD_GUEST_VIEW, tid=574233)
+    assert len(tc.floors) == 2
+    assert tc.author_uid == 731857
+
+
+THREAD_AUTHOR_VIEW = """
+<div id="postlist">
+<div id="post_1003">
+<table><tr>
+<td><div id="favatar1003" class="pls"><div class="authi"><a href="space-uid-731857.html" target="_blank">crystar23</a></div></div></td>
+<td><div id="postnum1003"><em>8</em></div>
+<div id="authorposton1003"><span>2026-7-28 20:00</span></div>
+<div id="postmessage_1003" class="t_f">楼主第 8 楼内容</div></td></tr></table>
+</div>
+<div id="post_1002">
+<table><tr>
+<td><div id="favatar1002" class="pls"><div class="authi"><a href="space-uid-731857.html" target="_blank">crystar23</a></div></div></td>
+<td><div id="postnum1002"><em>3</em></div>
+<div id="authorposton1002"><span>2026-7-28 10:00</span></div>
+<div id="postmessage_1002" class="t_f">楼主第 3 楼内容</div></td></tr></table>
+</div>
+</div>
+"""
+
+
+def test_parse_thread_author_view_descending():
+    """只看楼主倒序视图：无 1 楼但含楼主楼层，应正常解析楼层（订阅基线依赖）。"""
+    tc = parse_thread(THREAD_AUTHOR_VIEW, tid=1)
+    assert len(tc.floors) == 2
+    floors = [f.floor for f in tc.floors]
+    assert floors == [8, 3]
+    assert tc.author_uid == 0  # 无 1 楼时拿不到楼主身份，由调用方先用正序页获取
 
 
 THREAD_OP_NO_SPAN = """
