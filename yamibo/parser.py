@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timedelta, timezone
 
 from bs4 import BeautifulSoup
 
@@ -7,6 +8,8 @@ from yamibo.models import HotItem, PostFloor, SignStatus, ThreadContent, ThreadS
 TID_RE = re.compile(r"thread-(\d+)-")
 UID_RE = re.compile(r"space-uid-(\d+)\.html")
 FORMHASH_RE = re.compile(r"formhash=([a-f0-9]{8})")
+RANK_CACHE_NEXT_RE = re.compile(r"下次将于\s*(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
+RANK_TZ = timezone(timedelta(hours=8))  # 东八区固定偏移（中国无夏令时，避免依赖 tzdata 包）
 
 BBS_ORIGIN = "https://bbs.yamibo.com"
 LOGIN_PROMPT_MARKERS = ("您需要登录", "提示信息")
@@ -103,6 +106,24 @@ def parse_ranklist(html: str) -> list[HotItem]:
             )
         )
     return items
+
+
+def extract_rank_cache_next(html: str) -> datetime | None:
+    """解析排行榜页脚缓存提示「下次将于 YYYY-M-D HH:MM 进行更新」（东八区）。
+
+    榜单数据被缓存、约 5 小时刷新一次；调度应 sleep 到这个时刻再抓。
+    文案缺失或日期非法返回 None（调用方回退到兜底间隔）。
+    """
+    m = RANK_CACHE_NEXT_RE.search(html or "")
+    if not m:
+        return None
+    try:
+        return datetime(
+            int(m.group(1)), int(m.group(2)), int(m.group(3)),
+            int(m.group(4)), int(m.group(5)), tzinfo=RANK_TZ,
+        )
+    except ValueError:
+        return None
 
 
 def parse_forum_threads(html: str) -> list[ThreadSummary]:
