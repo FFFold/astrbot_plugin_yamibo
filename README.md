@@ -37,7 +37,7 @@
 | 功能 | 说明 |
 |---|---|
 | ✅ **自动签到** | 每天固定时间自动打卡（东八区），支持手动签到与状态查询 |
-| 🔥 **热帖推送** | 定时抓取本周回帖排行推送到绑定会话，按天去重 |
+| 🔥 **热帖推送** | 今日热度榜双通道推送：每天定时全量日报 + 榜单刷新后增量推新进榜帖（自动对齐约 5h 的榜单缓存） |
 | 📚 **漫画/连载打包** | 解析帖子全部图片，生成 PDF 或 QQ 合并转发（每图一节点） |
 | 🔔 **帖子订阅** | 按「只看楼主」跟踪，楼主新楼层（文本+图片）整体推送；多会话可订阅同一帖 |
 | 🔍 **浏览与搜索** | 版块帖子列表（热度/最新排序）、全站搜索、帖子内容预览 |
@@ -81,7 +81,7 @@ pip install -r requirements.txt
 |---|---|---|---|
 | 论坛登录认证 | user_agent / proxy / manual_nox_token | 内置 UA / 空 / 空 | 可选：自定义 UA、代理，以及 WAF token 手动兜底 |
 | 签到 | enable / time | `true` / `10:00` | 自动签到开关与时间（HH:MM，东八区） |
-| 热帖推送 | enable / interval_min / count | `true` / `60` / `10` | 轮询间隔与每次条数 |
+| 热帖推送 | enable / count / daily.enable / daily.time / incremental.enable / incremental.interval_min | `true` / `10` / `true` / `20:00` / `true` / `60` | 全量日报（每天定时推完整今日热度榜）+ 增量雷达（榜单刷新后推新进榜帖，自动对齐约 5h 的榜单缓存；interval_min 仅作解析失败兜底） |
 | 帖子订阅 | check_interval_min / text_max_len / image_max | `30` / `2000` / `50` | 订阅轮询间隔、文本截断、单楼层图片上限 |
 | 漫画打包 | deliver_mode / max_pages / max_file_size_mb / download_concurrency / workdir | `auto` / `300` / `45` / `4` / `""` | 发送方式、页数与体积上限、并发、临时目录 |
 | 频率与安全 | comic_cooldown_sec / search_cooldown_sec / skip_hidden_content / notify_auth_fail | `60` / `30` / `true` / `false` | 冷却与隐私开关 |
@@ -105,7 +105,7 @@ pip install -r requirements.txt
 
 | 指令 | 说明 |
 |---|---|
-| `/yamibo 热帖 [N]` | 本周热帖，N 默认 10，最大 30 |
+| `/yamibo 热帖 [N]` | 今日热度榜，N 默认 10，最大 30 |
 | `/yamibo 订阅热帖` / `取消热帖` | 绑定/解绑本会话为热帖推送目标 |
 | `/yamibo 版块 <fid\|名称> [hot\|new] [页]` | 版块帖子列表，名称支持简繁体（如 `动漫区`/`動漫區`） |
 | `/yamibo 搜索 <关键词>` | 全站搜索（带冷却） |
