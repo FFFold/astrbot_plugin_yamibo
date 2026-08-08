@@ -1,6 +1,7 @@
 import re
 import time
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 TID_URL_RE = re.compile(r"(?:thread-(\d+)-|tid=(\d+))")
@@ -16,6 +17,12 @@ def cfg_get(config: dict, path: str, default: Any = None) -> Any:
             return default
         cur = cur.get(part)
     return cur if cur is not None else default
+
+
+def resolve_comic_workdir(config: dict, default_dir: Path) -> Path:
+    """漫画临时目录：优先 comic.workdir（容器部署时与协议端共享），否则默认目录。"""
+    override = str(cfg_get(config, "comic.workdir", "") or "").strip()
+    return Path(override) if override else default_dir
 
 
 def truncate(text: str, limit: int) -> str:

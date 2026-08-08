@@ -1,5 +1,15 @@
+from pathlib import Path
+
 from yamibo.models import HotItem, ThreadSummary
-from yamibo.utils import cfg_get, cooldown_ok, fmt_list, fmt_time, parse_tid_input, truncate
+from yamibo.utils import (
+    cfg_get,
+    cooldown_ok,
+    fmt_list,
+    fmt_time,
+    parse_tid_input,
+    resolve_comic_workdir,
+    truncate,
+)
 
 
 def test_parse_tid_input():
@@ -28,6 +38,15 @@ def test_cfg_get_nested():
     assert cfg_get(cfg, "limits.skip_hidden_content", True) is True
     assert cfg_get(cfg, "nope.nope", 1) == 1
     assert cfg_get({}, "a.b.c", None) is None
+
+
+def test_resolve_comic_workdir():
+    default = Path("data") / "plugin_data" / "astrbot_plugin_yamibo"
+    assert resolve_comic_workdir({}, default) == default
+    cfg = {"comic": {"workdir": "/data/shared/yamibo"}}
+    assert resolve_comic_workdir(cfg, default) == Path("/data/shared/yamibo")
+    cfg_blank = {"comic": {"workdir": "   "}}
+    assert resolve_comic_workdir(cfg_blank, default) == default
 
 
 def test_truncate():

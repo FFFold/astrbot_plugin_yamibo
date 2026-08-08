@@ -131,6 +131,12 @@
         "hint": "并发过高可能触发论坛风控，建议 2~8",
         "type": "int",
         "default": 4
+      },
+      "workdir": {
+        "description": "临时文件目录（可选）",
+        "hint": "容器部署 AstrBot 与协议端时，填两者共享的目录（如 /data/shared/yamibo），协议端才能读取 PDF/图片文件；留空使用默认目录 data/plugin_data/astrbot_plugin_yamibo",
+        "type": "string",
+        "default": ""
       }
     }
   },

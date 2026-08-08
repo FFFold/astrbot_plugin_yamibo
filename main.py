@@ -21,7 +21,7 @@ from yamibo.parser import (
 )
 from yamibo.scheduler import Scheduler
 from yamibo.subscriber import Subscriber
-from yamibo.utils import cfg_get, cooldown_ok, fmt_list, parse_tid_input
+from yamibo.utils import cfg_get, cooldown_ok, fmt_list, parse_tid_input, resolve_comic_workdir
 
 # fid -> 显示名；查找支持繁体/简体/常见简称
 FORUM_NAMES: dict[str, str] = {
@@ -83,7 +83,8 @@ class AstrBotPlugin(Star):
                 self.client.set_manual_token(manual_token)
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-            data_dir = Path(get_astrbot_data_path()) / "plugin_data" / "astrbot_plugin_yamibo"
+            default_dir = Path(get_astrbot_data_path()) / "plugin_data" / "astrbot_plugin_yamibo"
+            data_dir = resolve_comic_workdir(self.config, default_dir)
             data_dir.mkdir(parents=True, exist_ok=True)
             self.packager = Packager(
                 self.client.session,
