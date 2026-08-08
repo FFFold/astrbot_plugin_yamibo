@@ -377,7 +377,11 @@ class AstrBotPlugin(Star):
         return [Comp.File(file=str(out), name=out.name)], False
 
     async def _build_forward_chains(self, files, tid_num: int, title: str, self_id: int) -> list[list]:
-        """生成合并转发节点批次（每批 100 节点）。"""
+        """生成合并转发节点批次（每批 100 节点）。
+
+        注意：每条 chain 必须是单个 Comp.Nodes（内含全部节点），
+        aiocqhttp 适配器对 chain 中的每个 Node/Nodes 段分别发送一次转发。
+        """
         import astrbot.api.message_components as Comp
 
         chunks = build_forward_chunks(files)
@@ -388,7 +392,7 @@ class AstrBotPlugin(Star):
                 Comp.Node(uin=self_id, name=sender_name, content=[Comp.Image.fromFileSystem(str(f))])
                 for f in chunk
             ]
-            chains.append(nodes)
+            chains.append([Comp.Nodes(nodes=nodes)])
         return chains
 
     # ---- 指令：订阅 ----
