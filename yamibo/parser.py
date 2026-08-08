@@ -9,7 +9,7 @@ TID_RE = re.compile(r"thread-(\d+)-")
 UID_RE = re.compile(r"space-uid-(\d+)\.html")
 FORMHASH_RE = re.compile(r"formhash=([a-f0-9]{8})")
 RANK_CACHE_NEXT_RE = re.compile(r"下次将于\s*(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
-RANK_TZ = timezone(timedelta(hours=8))  # 东八区固定偏移（中国无夏令时，避免依赖 tzdata 包）
+TZ = timezone(timedelta(hours=8))  # 东八区固定偏移（中国无夏令时，避免依赖 tzdata 包）；scheduler 复用此常量
 
 BBS_ORIGIN = "https://bbs.yamibo.com"
 LOGIN_PROMPT_MARKERS = ("您需要登录", "提示信息")
@@ -120,7 +120,7 @@ def extract_rank_cache_next(html: str) -> datetime | None:
     try:
         return datetime(
             int(m.group(1)), int(m.group(2)), int(m.group(3)),
-            int(m.group(4)), int(m.group(5)), tzinfo=RANK_TZ,
+            int(m.group(4)), int(m.group(5)), tzinfo=TZ,
         )
     except ValueError:
         return None

@@ -5,15 +5,14 @@ import logging
 import random
 import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
 from yamibo.client import NotLoggedInError
 from yamibo.hotpush import IncrState, compute_incremental
-from yamibo.parser import parse_thread
+from yamibo.parser import TZ, parse_thread
 from yamibo.subscriber import Subscriber
 
-TZ = timezone(timedelta(hours=8))  # 东八区固定偏移（中国无夏令时，避免依赖 tzdata 包）
 RANK_UPDATE_GRACE = 300  # 秒；榜单缓存更新时刻后等 5 分钟再抓，防源站 cron 延迟
 SendFn = Callable[[str, str], Awaitable[None]]
 ConfigGet = Callable[[str, Any], Any]
@@ -192,8 +191,12 @@ class Scheduler:
             if self._hot_daily_date:
                 logger.info("hot push: 已恢复全量日报状态 date=%s", self._hot_daily_date)
 
-    async def _sleep_until(self, next_time) -> None:
-        """sleep 到榜单下次缓存更新 + 5 分钟；解析失败用兜底间隔。"""
+    async def _sleep_until(self, next_time: datetime | None) -> None:
+        """sleep 到榜单下次缓存更新 + 5 分钟；解析失败用兜底间隔。
+
+        next_time 为 aware datetime（东八区，parser.TZ），来自榜单页脚
+        「下次将于 … 进行更新」的缓存提示；为 None 表示未解析到。
+        """
         interval_min = int(self._cfg_get("hot_push.incremental.interval_min", 60))
         if next_time is not None:
             delta = (next_time - _now()).total_seconds() + RANK_UPDATE_GRACE
