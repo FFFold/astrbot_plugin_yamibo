@@ -86,6 +86,8 @@ pip install -r requirements.txt
 | 漫画打包 | deliver_mode / max_pages / max_file_size_mb / download_concurrency / workdir | `auto` / `300` / `45` / `4` / `""` | 发送方式、页数与体积上限、并发、临时目录 |
 | 频率与安全 | comic_cooldown_sec / search_cooldown_sec / skip_hidden_content / notify_auth_fail | `60` / `30` / `true` / `false` | 冷却与隐私开关 |
 
+> ⏱️ **定时任务抖动**：全量日报与自动签到在设定时间后 **0~5 分钟随机延迟**执行（避免每天同一时刻产生规律性请求）。如设定 20:30，实际推送可能在 20:30~20:35 之间。
+
 > 🐳 **容器部署提示**：AstrBot 与协议端（如 NapCat）分容器部署时，`comic.workdir` 填两者共享的卷目录（如 `/data/shared/yamibo`），协议端才能读取生成的 PDF 文件。
 
 ## 💬 指令
