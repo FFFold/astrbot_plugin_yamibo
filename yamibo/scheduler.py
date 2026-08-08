@@ -62,6 +62,7 @@ class Scheduler:
         self._clock: Callable[[], float] = time.monotonic
         self._hot_incr_state: IncrState | None = None
         self._hot_daily_date: str | None = None
+        self._auth_fail_notified_at = 0.0  # 上次 cookie 失效告警时间（monotonic），用于去重
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         self._running = False
@@ -87,7 +88,8 @@ class Scheduler:
                 logger.error("sign failed: sign.time 配置格式错误: %r", target)
                 return
             hour, minute = hm
-            if int(current_time[:2]) * 60 + int(current_time[3:]) < hour * 60 + minute:
+            now_hm = _parse_hhmm(current_time)
+            if now_hm is None or now_hm[0] * 60 + now_hm[1] < hour * 60 + minute:
                 return
             _, status = await self._client.get_sign_status()
             if not status.signed_today:
@@ -108,7 +110,7 @@ class Scheduler:
         """推送全量日报。
 
         返回 None = 无需短间隔重试（已送达/无订阅会话/未到点/已推/禁用）；
-        返回秒数 = 该间隔后重试（空榜/普通异常 15 分钟，cookie 失效 60 分钟）。
+        返回秒数 = 该间隔后重试（空榜/cookie 失效 60 分钟，其余异常 15 分钟）。
         """
         if not self._cfg_get("hot_push.enable", True) or not self._cfg_get("hot_push.daily.enable", True):
             return None
@@ -118,7 +120,8 @@ class Scheduler:
             logger.error("hot push: daily.time 配置格式错误: %r", target)
             return None
         hour, minute = hm
-        if int(now_time[:2]) * 60 + int(now_time[3:]) < hour * 60 + minute:
+        now_hm = _parse_hhmm(now_time)
+        if now_hm is None or now_hm[0] * 60 + now_hm[1] < hour * 60 + minute:
             return None
         if self._hot_daily_date == today:
             return None
@@ -262,6 +265,9 @@ class Scheduler:
                 next_sleep = await self._maybe_incr_hot_push(today=n.strftime("%Y-%m-%d"))
                 if isinstance(next_sleep, (int, float)):
                     await self._sleep(next_sleep)  # 送达失败：短间隔重试
+                elif next_sleep is None:
+                    # 异常/cookie 失效：静默兜底重试（失败原因已在 _maybe_incr_hot_push 内记录）
+                    await self._sleep(int(self._cfg_get("hot_push.incremental.interval_min", 60)) * 60)
                 else:
                     await self._sleep_until(next_sleep)
             except Exception:
@@ -279,8 +285,13 @@ class Scheduler:
         return delivered
 
     async def _notify_auth_fail(self) -> None:
+        """cookie 失效告警（1 小时内去重，避免多循环各自触发轰炸）。"""
         if not self._cfg_get("limits.notify_auth_fail", False):
             return
+        now = time.monotonic()
+        if now - self._auth_fail_notified_at < 3600:
+            return
+        self._auth_fail_notified_at = now
         await self._push_to_targets("【百合会助手】cookie 已失效，请管理员在插件配置中更新 auth/saltkey")
 
     # ---- 订阅轮询 ----

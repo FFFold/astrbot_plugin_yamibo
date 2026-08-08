@@ -146,6 +146,17 @@ async def test_daily_hot_unpadded_time(make_sched):
     assert len(rec.sent) == 1
 
 
+async def test_daily_hot_unpadded_now_time(make_sched):
+    # now_time 非零填充（如 "9:00"）不崩溃，按 9:00 判断
+    s, client, sub, rec = make_sched(**{"hot_push.daily.time": "10:00"})
+    await s._maybe_daily_hot_push(today="2026-08-08", now_time="9:00")
+    assert rec.sent == []
+    await s._maybe_daily_hot_push(today="2026-08-08", now_time="9:30")
+    assert len(rec.sent) == 0  # 仍早于 10:00
+    await s._maybe_daily_hot_push(today="2026-08-08", now_time="10:01")
+    assert len(rec.sent) == 1
+
+
 async def test_daily_hot_empty_list_not_marked_done(make_sched):
     s, client, sub, rec = make_sched()
     client.hot_items = []
@@ -348,6 +359,21 @@ async def test_hot_count_zero_clamped(make_sched):
     s._client.get_hot_rank = record
     await s._maybe_incr_hot_push(today="2026-08-08")
     assert fetched["n"] == 1
+
+
+async def test_auth_fail_notify_deduped(make_sched):
+    s, client, sub, rec = make_sched(**{"limits.notify_auth_fail": True})
+    await s._notify_auth_fail()
+    await s._notify_auth_fail()
+    await s._notify_auth_fail()
+    assert len(rec.sent) == 1
+    assert "cookie" in rec.sent[0][1]
+
+
+async def test_auth_fail_notify_disabled(make_sched):
+    s, client, sub, rec = make_sched(**{"limits.notify_auth_fail": False})
+    await s._notify_auth_fail()
+    assert rec.sent == []
 
 
 # ---- 调度等待 ----
