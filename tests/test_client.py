@@ -73,10 +73,13 @@ async def test_ensure_logged_in_raises(server):
 
 
 RANKLIST_SAMPLE = """
+<script>var discuz_uid = '621168';</script>
 <div class="tl"><table><tbody><tr class="th"><td>&nbsp;</td><th>主题</th><td>版块</td><td>作者</td><td>热度</td></tr></tbody>
 <tbody><tr><th><a href="thread-519989-1-1.html">汇总</a></th><td class="by"><cite><a href="space-uid-1.html">hongyuny</a></cite></td><td><a href="thread-519989-1-1.html">3365</a></td></tr></tbody></table></div>
 <div class="notice">排行榜数据已被缓存，上次于 2026-8-8 14:39 被更新，下次将于 2026-8-8 19:39 进行更新</div>
 """
+
+RANKLIST_NOT_LOGGED_IN = RANKLIST_SAMPLE.replace("var discuz_uid = '621168';", "var discuz_uid = '0';")
 
 
 async def test_get_hot_rank_uses_heats_today_url(monkeypatch):
@@ -97,3 +100,13 @@ async def test_get_hot_rank_uses_heats_today_url(monkeypatch):
     assert next_time is not None and next_time.minute == 39
     items2 = await client.get_hot_threads(2)
     assert items2[0].tid == 519989
+
+
+async def test_get_hot_rank_raises_when_not_logged_in(monkeypatch):
+    async def fake_get_text(path, **kw):
+        return RANKLIST_NOT_LOGGED_IN
+
+    client = ForumClient(auth="a", saltkey="b", user_agent="ua")
+    monkeypatch.setattr(client, "get_text", fake_get_text)
+    with pytest.raises(NotLoggedInError):
+        await client.get_hot_rank(5)

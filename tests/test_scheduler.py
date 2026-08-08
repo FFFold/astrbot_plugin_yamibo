@@ -150,7 +150,7 @@ async def test_daily_hot_empty_list_not_marked_done(make_sched):
     s, client, sub, rec = make_sched()
     client.hot_items = []
     retry_in = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
-    assert retry_in == 15 * 60
+    assert retry_in == 60 * 60
     assert rec.sent == []
     assert sub.saved_daily == []
     assert s._hot_daily_date is None
@@ -286,7 +286,8 @@ async def test_incr_push_failure_not_marked_pushed(make_sched):
         raise RuntimeError("send failed")
 
     s._send = bad_send
-    await s._maybe_incr_hot_push(today="2026-08-08")
+    retry_in = await s._maybe_incr_hot_push(today="2026-08-08")
+    assert retry_in == 60 * 60  # 短间隔重试（interval_min 兜底），而非等下次榜单刷新
     # 未送达任何会话 → 不保存已推状态
     assert sub.saved_incr[-1].pushed_tids == []
     # 恢复正常后重试，3 仍被推送
@@ -321,6 +322,32 @@ async def test_incr_master_switch(make_sched):
     s, client, sub, rec = make_sched(**{"hot_push.enable": False})
     await s._maybe_incr_hot_push(today="2026-08-08")
     assert rec.sent == []
+
+
+async def test_hot_count_clamped(make_sched):
+    s, client, sub, rec = make_sched(**{"hot_push.count": 999})
+    fetched: dict = {}
+
+    async def record(n):
+        fetched["n"] = n
+        return client.hot_items, None
+
+    s._client.get_hot_rank = record
+    await s._maybe_incr_hot_push(today="2026-08-08")
+    assert fetched["n"] == 30
+
+
+async def test_hot_count_zero_clamped(make_sched):
+    s, client, sub, rec = make_sched(**{"hot_push.count": 0})
+    fetched: dict = {}
+
+    async def record(n):
+        fetched["n"] = n
+        return client.hot_items, None
+
+    s._client.get_hot_rank = record
+    await s._maybe_incr_hot_push(today="2026-08-08")
+    assert fetched["n"] == 1
 
 
 # ---- 调度等待 ----

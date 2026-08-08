@@ -95,6 +95,14 @@ class Scheduler:
         except Exception as e:
             logger.error("sign failed: %s", e)
 
+    @staticmethod
+    def _hot_count(cfg_get) -> int:
+        """榜单条数，clamp 到 1~30（配置可能填 0 或超大值）。"""
+        try:
+            return max(1, min(int(cfg_get("hot_push.count", 10)), 30))
+        except (TypeError, ValueError):
+            return 10
+
     # ---- 热帖：全量日报 ----
     async def _maybe_daily_hot_push(self, *, today: str, now_time: str) -> int | None:
         """推送全量日报。
@@ -115,25 +123,25 @@ class Scheduler:
         if self._hot_daily_date == today:
             return None
         try:
-            items = await self._client.get_hot_threads(int(self._cfg_get("hot_push.count", 10)))
+            items = await self._client.get_hot_threads(self._hot_count(self._cfg_get))
             if not items:
-                logger.warning("hot push: 全量推送时榜单为空，15 分钟后重试")
-                return 15 * 60
+                logger.warning("hot push: 全量推送时榜单为空，60 分钟后重试")
+                return 60 * 60
             from yamibo.utils import fmt_list
 
             text = fmt_list("百合会 · 今日热度榜", items, hot=True)
             targets = await self._sub.hot_targets()
             if not targets:
-                self._hot_daily_date = today
                 await self._sub.save_hot_daily_state(today)
+                self._hot_daily_date = today
                 logger.info("hot push: 全量日报无订阅会话，标记当日完成")
                 return None
             delivered = await self._push_to_targets(text, targets)
             if not delivered:
                 logger.warning("hot push: 全量日报未送达任何会话，15 分钟后重试（不标记已推）")
                 return 15 * 60
-            self._hot_daily_date = today
             await self._sub.save_hot_daily_state(today)
+            self._hot_daily_date = today
             logger.info("hot push: 全量日报已推送 %d 条", len(items))
             return None
         except NotLoggedInError:
@@ -146,15 +154,19 @@ class Scheduler:
 
     # ---- 热帖：增量雷达 ----
     async def _maybe_incr_hot_push(self, *, today: str):
-        """抓榜、差分、推送；返回 (下次缓存刷新时间 or None)。"""
+        """抓榜、差分、推送。
+
+        返回 (下次缓存刷新时间 or None)；送达失败时返回短间隔重试秒数，
+        避免等 5 小时错过仍在榜的新进榜帖子。
+        """
         if not self._cfg_get("hot_push.enable", True) or not self._cfg_get("hot_push.incremental.enable", True):
             return None
         try:
-            items, next_time = await self._client.get_hot_rank(int(self._cfg_get("hot_push.count", 10)))
+            items, next_time = await self._client.get_hot_rank(self._hot_count(self._cfg_get))
             new_state, fresh = compute_incremental(self._hot_incr_state, items, today)
             if not fresh:
+                await self._sub.save_hot_incr_state(new_state)
                 self._hot_incr_state = new_state
-                await self._sub.save_hot_incr_state(self._hot_incr_state)
                 logger.info("hot push: 增量无新进榜（当前 %d 条在榜）", len(items))
                 return next_time
             from yamibo.utils import fmt_list
@@ -162,12 +174,13 @@ class Scheduler:
             text = fmt_list("百合会 · 今日热度新上榜", fresh, hot=True)
             delivered = await self._push_to_targets(text)
             if delivered:
+                await self._sub.save_hot_incr_state(new_state)
                 self._hot_incr_state = new_state
-                await self._sub.save_hot_incr_state(self._hot_incr_state)
                 logger.info("hot push: 增量推送 %d 条新进榜: %s", len(fresh), [i.tid for i in fresh])
-            else:
-                logger.warning("hot push: 增量推送未送达任何会话，不标记已推（下次重试）")
-            return next_time
+                return next_time
+            retry_sec = int(self._cfg_get("hot_push.incremental.interval_min", 60)) * 60
+            logger.warning("hot push: 增量推送未送达任何会话，%.0f 分钟后重试（不标记已推）", retry_sec / 60)
+            return retry_sec
         except NotLoggedInError:
             logger.error("hot push failed: cookie 失效")
             await self._notify_auth_fail()
@@ -246,8 +259,11 @@ class Scheduler:
                     continue
                 await self._recover_hot_states()
                 n = _now()
-                next_time = await self._maybe_incr_hot_push(today=n.strftime("%Y-%m-%d"))
-                await self._sleep_until(next_time)
+                next_sleep = await self._maybe_incr_hot_push(today=n.strftime("%Y-%m-%d"))
+                if isinstance(next_sleep, (int, float)):
+                    await self._sleep(next_sleep)  # 送达失败：短间隔重试
+                else:
+                    await self._sleep_until(next_sleep)
             except Exception:
                 await self._sleep(300)
 

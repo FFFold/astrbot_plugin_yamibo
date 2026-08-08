@@ -186,8 +186,10 @@ class ForumClient:
 
         返回 (Top-N 帖子, 下次缓存刷新时间或 None)。
         页面页脚标注榜单缓存周期（约 5h），调度可据此对齐抓取时机。
+        cookie 失效时页面渲染登录提示、榜单为空，先检查登录态避免误判为空榜。
         """
         html = await self.get_text("/misc.php?mod=ranklist&type=thread&view=heats&orderby=today")
+        self.ensure_logged_in(html)
         return parse_ranklist(html)[:n], extract_rank_cache_next(html)
 
     async def get_hot_threads(self, n: int = 10) -> list:
