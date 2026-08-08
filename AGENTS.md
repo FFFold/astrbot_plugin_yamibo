@@ -13,6 +13,7 @@ AstrBot 插件：百合会论坛助手。`main.py` 是 AstrBot 入口（继承 S
 - 环境：`uv venv --python 3.12 .venv` + `uv sync --all-groups`（pytest/pytest-asyncio/ruff 在 dev group）
 - 冒烟（真实论坛，默认跳过）：`$env:YAMIBO_AUTH=...; $env:YAMIBO_SALTKEY=...; .venv\Scripts\python.exe scripts\smoke_test.py`
 - 验证插件能被 AstrBot 加载：用 **AstrBot 的 venv**（`D:\Projects\AstrBot\.venv`，含 astrbot 依赖）import main.py；dev venv 里没有 astrbot
+- **详细开发文档：`docs/dev/DEVELOPMENT.md`**（含反爬/WAF 完整原理、页面结构速查表、踩坑记录、扩展指南；**gitignore 不入库**，改动勿提交）
 
 ## 关键架构
 
@@ -25,7 +26,8 @@ AstrBot 插件：百合会论坛助手。`main.py` 是 AstrBot 入口（继承 S
 
 ## 论坛反爬/解析坑（硬经验，勿重蹈）
 
-- WAF 挑战脚本与反爬细节**禁止入库**（`docs/superpowers/` 已 gitignore）；单测用 `tests/fixtures/synthetic_challenge.js` 合成脚本，真实验证走 smoke_test
+- 反爬细节与详细原理见 **`docs/dev/DEVELOPMENT.md`**（含 WAF 挑战机制、shim 清单、token 生命周期）；该目录与 `docs/superpowers/` 均 gitignore 不入库
+- WAF 单测用 `tests/fixtures/synthetic_challenge.js` 合成脚本（只模拟调用模式），真实验证走 smoke_test
 - 签到状态只判 `.signbtn` 按钮区文本——全页搜「今日已打卡」会因排行表里他人记录假阳性
 - 搜索结果容器是 `div#threadlist`（不是 `#searchresult`）
 - 签到记录表 `table.dt.mtm` **无 `<tbody>`**，用 `find_all("tr")`
