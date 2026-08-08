@@ -149,10 +149,31 @@ async def test_daily_hot_unpadded_time(make_sched):
 async def test_daily_hot_empty_list_not_marked_done(make_sched):
     s, client, sub, rec = make_sched()
     client.hot_items = []
-    await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    ok = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert ok is False
     assert rec.sent == []
     assert sub.saved_daily == []
     assert s._hot_daily_date is None
+
+
+async def test_daily_hot_network_error_retryable(make_sched):
+    s, client, sub, rec = make_sched()
+
+    async def boom(n):
+        raise RuntimeError("network")
+
+    client.get_hot_threads = boom
+    ok = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert ok is False
+    assert s._hot_daily_date is None
+    # 恢复后重试成功
+    async def ok_fetch(n):
+        return client.hot_items[:n]
+
+    client.get_hot_threads = ok_fetch
+    ok = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert ok is True
+    assert len(rec.sent) == 1
 
 
 # ---- 增量雷达 ----
@@ -207,6 +228,25 @@ async def test_incr_next_day_resets(make_sched):
     assert len(rec.sent) == 2
     assert "I" in rec.sent[-1][1]
     assert "C" not in rec.sent[-1][1]
+
+
+async def test_incr_push_failure_not_marked_pushed(make_sched):
+    s, client, sub, rec = make_sched()
+    await s._maybe_incr_hot_push(today="2026-08-08")  # 基线 [1,2]
+    client.hot_items = [HotItem(tid=1, title="A"), HotItem(tid=3, title="C")]
+
+    async def bad_send(umo, text):
+        raise RuntimeError("send failed")
+
+    s._send = bad_send
+    await s._maybe_incr_hot_push(today="2026-08-08")
+    # 未送达任何会话 → 不保存已推状态
+    assert sub.saved_incr[-1].pushed_tids == []
+    # 恢复正常后重试，3 仍被推送
+    s._send = rec.send
+    await s._maybe_incr_hot_push(today="2026-08-08")
+    assert len(rec.sent) == 1
+    assert "C" in rec.sent[0][1]
 
 
 async def test_incr_recovers_state_from_kv(make_sched):

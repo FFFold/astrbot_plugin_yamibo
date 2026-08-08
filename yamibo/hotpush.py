@@ -25,15 +25,19 @@ def compute_incremental(
     """增量差分：返回 (新状态, 本次应推送的新进榜帖子)。
 
     规则：
-    - state 为 None（首次运行 / KV 数据丢失）：只建基线不推送，
-      防止把整个榜单误判为新进榜。
+    - 空榜单（解析回归 / 登录页渲染等异常情况）：保留旧基线、不推送、
+      不更新状态——防止恢复后把整个榜单误判为新进榜而轰炸。
+    - state 为 None 或从未成功建基线（首次运行 / KV 数据丢失）：只建基线不推送。
     - 同天：对比 last_tids 且不在 pushed_tids（当天推过不重推）。
     - 跨天：pushed_tids 清零，只对比 last_tids（昨天推过并掉榜、
       今天重新进榜的帖子可再推；一直未掉榜的帖子不算新进榜）。
-    - 空榜后恢复：last_tids 为空，全部在榜帖视为新进榜。
     """
     tids = [i.tid for i in items]
-    if state is None:
+    if not tids:
+        if state is None:
+            return IncrState(date=today), []
+        return state, []
+    if state is None or not state.last_tids:
         return IncrState(date=today, last_tids=tids), []
     if state.date == today:
         fresh = [i for i in items if i.tid not in state.last_tids and i.tid not in state.pushed_tids]

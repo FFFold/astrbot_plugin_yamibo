@@ -97,24 +97,25 @@ class Scheduler:
             logger.error("sign failed: %s", e)
 
     # ---- 热帖：全量日报 ----
-    async def _maybe_daily_hot_push(self, *, today: str, now_time: str) -> None:
+    async def _maybe_daily_hot_push(self, *, today: str, now_time: str) -> bool:
+        """推送全量日报。返回 True 表示无需短间隔重试（已送达/未到点/已推/禁用）。"""
         if not self._cfg_get("hot_push.enable", True) or not self._cfg_get("hot_push.daily.enable", True):
-            return
+            return True
         target = str(self._cfg_get("hot_push.daily.time", "20:00"))
         hm = _parse_hhmm(target)
         if hm is None:
             logger.error("hot push: daily.time 配置格式错误: %r", target)
-            return
+            return True
         hour, minute = hm
         if int(now_time[:2]) * 60 + int(now_time[3:]) < hour * 60 + minute:
-            return
+            return True
         if self._hot_daily_date == today:
-            return
+            return True
         try:
             items = await self._client.get_hot_threads(int(self._cfg_get("hot_push.count", 10)))
             if not items:
-                logger.warning("hot push: 全量推送时榜单为空，跳过今日（未标记已完成）")
-                return
+                logger.warning("hot push: 全量推送时榜单为空，15 分钟后重试")
+                return False
             from yamibo.utils import fmt_list
 
             text = fmt_list("百合会 · 今日热度榜", items, hot=True)
@@ -122,11 +123,14 @@ class Scheduler:
             self._hot_daily_date = today
             await self._sub.save_hot_daily_state(today)
             logger.info("hot push: 全量日报已推送 %d 条", len(items))
+            return True
         except NotLoggedInError:
             logger.error("hot push failed: cookie 失效")
             await self._notify_auth_fail()
+            return False
         except Exception as e:
             logger.error("hot push failed: %s", e)
+            return False
 
     # ---- 热帖：增量雷达 ----
     async def _maybe_incr_hot_push(self, *, today: str):
@@ -135,16 +139,22 @@ class Scheduler:
             return None
         try:
             items, next_time = await self._client.get_hot_rank(int(self._cfg_get("hot_push.count", 10)))
-            self._hot_incr_state, fresh = compute_incremental(self._hot_incr_state, items, today)
-            await self._sub.save_hot_incr_state(self._hot_incr_state)
+            new_state, fresh = compute_incremental(self._hot_incr_state, items, today)
             if not fresh:
+                self._hot_incr_state = new_state
+                await self._sub.save_hot_incr_state(self._hot_incr_state)
                 logger.info("hot push: 增量无新进榜（当前 %d 条在榜）", len(items))
                 return next_time
             from yamibo.utils import fmt_list
 
             text = fmt_list("百合会 · 今日热度新上榜", fresh, hot=True)
-            await self._push_to_targets(text)
-            logger.info("hot push: 增量推送 %d 条新进榜: %s", len(fresh), [i.tid for i in fresh])
+            delivered = await self._push_to_targets(text)
+            if delivered:
+                self._hot_incr_state = new_state
+                await self._sub.save_hot_incr_state(self._hot_incr_state)
+                logger.info("hot push: 增量推送 %d 条新进榜: %s", len(fresh), [i.tid for i in fresh])
+            else:
+                logger.warning("hot push: 增量推送未送达任何会话，不标记已推（下次重试）")
             return next_time
         except NotLoggedInError:
             logger.error("hot push failed: cookie 失效")
@@ -171,6 +181,7 @@ class Scheduler:
 
     async def _sleep_until(self, next_time) -> None:
         """sleep 到榜单下次缓存更新 + 5 分钟；解析失败用兜底间隔。"""
+        interval_min = int(self._cfg_get("hot_push.incremental.interval_min", 60))
         if next_time is not None:
             delta = (next_time - _now()).total_seconds() + RANK_UPDATE_GRACE
             if delta > 0:
@@ -180,7 +191,12 @@ class Scheduler:
                 )
                 await self._sleep(delta)
                 return
-        interval_min = int(self._cfg_get("hot_push.incremental.interval_min", 60))
+            logger.warning(
+                "hot push: 榜单刷新时间 %s 已过，%.0f 分钟兜底轮询",
+                next_time.strftime("%m-%d %H:%M"), interval_min,
+            )
+            await self._sleep(interval_min * 60)
+            return
         logger.warning("hot push: 无法解析榜单刷新时间，%.0f 分钟兜底轮询", interval_min)
         await self._sleep(interval_min * 60)
 
@@ -188,14 +204,17 @@ class Scheduler:
         while not self._stop.is_set():
             try:
                 n = _now()
-                await self._maybe_daily_hot_push(
+                done = await self._maybe_daily_hot_push(
                     today=n.strftime("%Y-%m-%d"), now_time=n.strftime("%H:%M")
                 )
-                next_sec = _target_sleep_seconds(n, str(self._cfg_get("hot_push.daily.time", "20:00")))
-                if next_sec is None:
-                    logger.error("hot push: daily.time 配置格式错误，1 小时后重试")
-                    next_sec = 3600
-                await self._sleep(next_sec + random.uniform(0, 300))
+                if done:
+                    next_sec = _target_sleep_seconds(n, str(self._cfg_get("hot_push.daily.time", "20:00")))
+                    if next_sec is None:
+                        logger.error("hot push: daily.time 配置格式错误，1 小时后重试")
+                        next_sec = 3600
+                    await self._sleep(next_sec + random.uniform(0, 300))
+                else:
+                    await self._sleep(15 * 60)  # 失败/空榜：短间隔重试
             except Exception:
                 await self._sleep(300)
 
@@ -215,12 +234,16 @@ class Scheduler:
             except Exception:
                 await self._sleep(300)
 
-    async def _push_to_targets(self, text: str) -> None:
+    async def _push_to_targets(self, text: str) -> bool:
+        """推送全部订阅会话。返回是否至少送达一个会话。"""
+        delivered = False
         for umo in await self._sub.hot_targets():
             try:
                 await self._send(umo, text)
+                delivered = True
             except Exception:
                 pass
+        return delivered
 
     async def _notify_auth_fail(self) -> None:
         if not self._cfg_get("limits.notify_auth_fail", False):

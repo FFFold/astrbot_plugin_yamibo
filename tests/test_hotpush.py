@@ -67,11 +67,22 @@ async def test_cross_day_keeps_last_tids_as_baseline():
     assert [i.tid for i in fresh] == [3]
 
 
-async def test_empty_ranklist_tolerated():
+async def test_empty_ranklist_keeps_baseline():
     state, _ = compute_incremental(None, _items(1), today="2026-08-08")
+    # 空榜（解析回归/登录页）→ 保留旧基线、不推送
     state, fresh = compute_incremental(state, [], today="2026-08-08")
     assert fresh == []
-    assert state.last_tids == []
-    # 空榜后恢复，全部算新进榜（基线已空）
+    assert state.last_tids == [1]
+    # 恢复后只推真正新进榜的
     state, fresh = compute_incremental(state, _items(1, 2), today="2026-08-08")
-    assert [i.tid for i in fresh] == [1, 2]
+    assert [i.tid for i in fresh] == [2]
+
+
+async def test_empty_ranklist_first_run_keeps_no_baseline():
+    # 首次运行即空榜：不建基线；恢复后先建基线不推（防轰炸）
+    state, fresh = compute_incremental(None, [], today="2026-08-08")
+    assert fresh == []
+    assert state.last_tids == []
+    state, fresh = compute_incremental(state, _items(1, 2), today="2026-08-08")
+    assert fresh == []
+    assert state.last_tids == [1, 2]
