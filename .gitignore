@@ -220,7 +220,10 @@ __marimo__/
 # 本地设计文档
 docs/superpowers/
 
-# 本地设计文档与实现计划（含反爬细节，不公开）
+# 本地设计文档与实现计划
 docs/superpowers/
 # 测试临时产物
 tests/.tmp/
+
+# 详细开发文档
+docs/dev/
