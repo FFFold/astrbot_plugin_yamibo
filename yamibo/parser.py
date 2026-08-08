@@ -18,8 +18,15 @@ def extract_formhash(html: str) -> str | None:
 
 
 def parse_sign_status(html: str) -> SignStatus:
-    if "今日已打卡" in html:
-        return SignStatus(signed_today=True)
+    """判断今日是否已签到。
+
+    注意：只能看 .signbtn 按钮区文本（「点击打卡」/「今日已打卡」），
+    不能全页搜索——页面底部今日排行表中其他用户的「今日已打卡」会造成假阳性。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    btn = soup.select_one(".signbtn")
+    if btn:
+        return SignStatus(signed_today="今日已打卡" in btn.get_text())
     return SignStatus(signed_today=False)
 
 

@@ -71,6 +71,16 @@ def test_parse_sign_status_unsigned():
     assert st.signed_today is False
 
 
+def test_parse_sign_status_unsigned_with_other_users_rows():
+    html = SIGN_UNSIGNED + """
+    <table class="dt mtm"><tbody><tr><th>用户名</th><th>今日状态</th></tr>
+    <tr><td><a href="space-uid-1.html">菱歌缥缈泛烟津</a></td><td><font color="green">今日已打卡</font></td></tr>
+    </tbody></table>
+    """
+    st = parse_sign_status(html)
+    assert st.signed_today is False
+
+
 def test_parse_sign_status_signed():
     st = parse_sign_status(SIGN_SIGNED)
     assert st.signed_today is True
