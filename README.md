@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🌸 astrbot_plugin_yamibo
+# 🌸 百合会论坛助手
 
-**百合会论坛助手** —— 为 [AstrBot](https://astrbot.app) 打造的百合会论坛（[bbs.yamibo.com](https://bbs.yamibo.com)）自动化插件
+为 [AstrBot](https://astrbot.app) 打造的百合会论坛（[bbs.yamibo.com](https://bbs.yamibo.com)）自动化插件
 
 自动签到 · 热帖推送 · 漫画打包 · 订阅追踪 · 浏览搜索
 
@@ -13,6 +13,10 @@
 ![License](https://img.shields.io/badge/License-MIT-orange?style=flat-square)
 
 </div>
+
+<p align="center">
+<b>⭐ 如果这个项目对你有帮助，欢迎 <a href="https://github.com/FFFold/astrbot_plugin_yamibo">Star</a> 支持！</b>
+</p>
 
 ---
 
@@ -155,7 +159,7 @@ $env:YAMIBO_AUTH="..." ; $env:YAMIBO_SALTKEY="..." ; .venv\Scripts\python.exe sc
 
 ## 📜 License
 
-[MIT](LICENSE) © Fold
+[GNU Affero General Public License v3.0](LICENSE) © Fold
 
 ---
 
