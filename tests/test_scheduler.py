@@ -2,7 +2,7 @@ import pytest
 
 from yamibo.hotpush import IncrState
 from yamibo.models import HotItem, SignStatus
-from yamibo.scheduler import RANK_UPDATE_GRACE, Scheduler
+from yamibo.scheduler import RANK_UPDATE_GRACE, Scheduler, _parse_hhmm, _target_sleep_seconds
 from yamibo.utils import cfg_get
 
 UMO = "aiocqhttp:group:111"
@@ -134,6 +134,27 @@ async def test_daily_hot_disabled(make_sched):
     assert rec.sent == []
 
 
+async def test_daily_hot_master_switch(make_sched):
+    s, client, sub, rec = make_sched(**{"hot_push.enable": False})
+    await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert rec.sent == []
+
+
+async def test_daily_hot_unpadded_time(make_sched):
+    s, client, sub, rec = make_sched(**{"hot_push.daily.time": "8:00"})
+    await s._maybe_daily_hot_push(today="2026-08-08", now_time="08:30")
+    assert len(rec.sent) == 1
+
+
+async def test_daily_hot_empty_list_not_marked_done(make_sched):
+    s, client, sub, rec = make_sched()
+    client.hot_items = []
+    await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert rec.sent == []
+    assert sub.saved_daily == []
+    assert s._hot_daily_date is None
+
+
 # ---- 增量雷达 ----
 
 async def test_incr_first_run_baseline_only(make_sched):
@@ -209,6 +230,12 @@ async def test_incr_disabled(make_sched):
     assert rec.sent == []
 
 
+async def test_incr_master_switch(make_sched):
+    s, client, sub, rec = make_sched(**{"hot_push.enable": False})
+    await s._maybe_incr_hot_push(today="2026-08-08")
+    assert rec.sent == []
+
+
 # ---- 调度等待 ----
 
 async def test_sleep_until_uses_next_update(make_sched):
@@ -238,3 +265,41 @@ async def test_sleep_until_fallback_on_no_time(make_sched):
     s._sleep = fake_sleep
     await s._sleep_until(None)
     assert sleeps[-1] == 60 * 60
+
+
+# ---- 定时目标计算 ----
+
+def _t(h, m, s=0):
+    from datetime import datetime, timedelta, timezone
+
+    return datetime(2026, 8, 8, h, m, s, tzinfo=timezone(timedelta(hours=8)))
+
+
+async def test_parse_hhmm():
+    assert _parse_hhmm("20:00") == (20, 0)
+    assert _parse_hhmm("8:00") == (8, 0)
+    assert _parse_hhmm("24:00") is None
+    assert _parse_hhmm("20:00:00") is None
+    assert _parse_hhmm("abc") is None
+
+
+async def test_target_sleep_seconds_same_day():
+    # 19:00:30 启动、target 20:00 → 当天 20:00（3600 - 30 秒）
+    sec = _target_sleep_seconds(_t(19, 0, 30), "20:00")
+    assert sec == 3600 - 30
+
+
+async def test_target_sleep_seconds_next_day():
+    # 21:00 启动、target 20:00 → 明天 20:00（23h）
+    sec = _target_sleep_seconds(_t(21, 0), "20:00")
+    assert sec == 23 * 3600
+
+
+async def test_target_sleep_seconds_unpadded():
+    # 07:30 启动、target "8:00"（非零填充）→ 30 分钟
+    sec = _target_sleep_seconds(_t(7, 30), "8:00")
+    assert sec == 1800
+
+
+async def test_target_sleep_seconds_malformed():
+    assert _target_sleep_seconds(_t(10, 0), "20:00:00") is None

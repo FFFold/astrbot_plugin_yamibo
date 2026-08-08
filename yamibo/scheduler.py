@@ -25,6 +25,29 @@ def _now() -> datetime:
     return datetime.now(TZ)
 
 
+def _parse_hhmm(text: str) -> tuple[int, int] | None:
+    """解析 HH:MM（小时允许不补零）；格式非法或越界返回 None。"""
+    try:
+        hour, minute = (int(x) for x in str(text).split(":"))
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
+
+
+def _target_sleep_seconds(now: datetime, target: str) -> int | None:
+    """距下次 target 时刻（HH:MM）的秒数：当天未过则当天，已过则明天。解析失败返回 None。"""
+    hm = _parse_hhmm(target)
+    if hm is None:
+        return None
+    hour, minute = hm
+    delta = (hour * 60 + minute) - (now.hour * 60 + now.minute)
+    if delta <= 0:
+        delta += 24 * 60
+    return max(60, delta * 60 - now.second)
+
+
 class Scheduler:
     def __init__(
         self,
@@ -60,7 +83,12 @@ class Scheduler:
         try:
             target = str(self._cfg_get("sign.time", "10:00"))
             current_time = now.split()[1] if " " in now else now
-            if current_time < target:
+            hm = _parse_hhmm(target)
+            if hm is None:
+                logger.error("sign failed: sign.time 配置格式错误: %r", target)
+                return
+            hour, minute = hm
+            if int(current_time[:2]) * 60 + int(current_time[3:]) < hour * 60 + minute:
                 return
             _, status = await self._client.get_sign_status()
             if not status.signed_today:
@@ -70,19 +98,22 @@ class Scheduler:
 
     # ---- 热帖：全量日报 ----
     async def _maybe_daily_hot_push(self, *, today: str, now_time: str) -> None:
-        if not self._cfg_get("hot_push.daily.enable", True):
+        if not self._cfg_get("hot_push.enable", True) or not self._cfg_get("hot_push.daily.enable", True):
             return
         target = str(self._cfg_get("hot_push.daily.time", "20:00"))
-        if now_time < target:
+        hm = _parse_hhmm(target)
+        if hm is None:
+            logger.error("hot push: daily.time 配置格式错误: %r", target)
+            return
+        hour, minute = hm
+        if int(now_time[:2]) * 60 + int(now_time[3:]) < hour * 60 + minute:
             return
         if self._hot_daily_date == today:
             return
         try:
             items = await self._client.get_hot_threads(int(self._cfg_get("hot_push.count", 10)))
             if not items:
-                logger.warning("hot push: 全量推送时榜单为空，跳过今日")
-                self._hot_daily_date = today
-                await self._sub.save_hot_daily_state(today)
+                logger.warning("hot push: 全量推送时榜单为空，跳过今日（未标记已完成）")
                 return
             from yamibo.utils import fmt_list
 
@@ -100,7 +131,7 @@ class Scheduler:
     # ---- 热帖：增量雷达 ----
     async def _maybe_incr_hot_push(self, *, today: str):
         """抓榜、差分、推送；返回 (下次缓存刷新时间 or None)。"""
-        if not self._cfg_get("hot_push.incremental.enable", True):
+        if not self._cfg_get("hot_push.enable", True) or not self._cfg_get("hot_push.incremental.enable", True):
             return None
         try:
             items, next_time = await self._client.get_hot_rank(int(self._cfg_get("hot_push.count", 10)))
@@ -160,17 +191,23 @@ class Scheduler:
                 await self._maybe_daily_hot_push(
                     today=n.strftime("%Y-%m-%d"), now_time=n.strftime("%H:%M")
                 )
-                target = str(self._cfg_get("hot_push.daily.time", "20:00"))
-                hour, minute = (int(x) for x in str(target).split(":"))
-                next_sec = ((23 - n.hour) * 3600 + (59 - n.minute) * 60 + (60 - n.second)) % 86400
-                next_sec += hour * 3600 + minute * 60
-                await self._sleep(max(60, next_sec) + random.uniform(0, 300))
+                next_sec = _target_sleep_seconds(n, str(self._cfg_get("hot_push.daily.time", "20:00")))
+                if next_sec is None:
+                    logger.error("hot push: daily.time 配置格式错误，1 小时后重试")
+                    next_sec = 3600
+                await self._sleep(next_sec + random.uniform(0, 300))
             except Exception:
                 await self._sleep(300)
 
     async def _run_incr_hot_loop(self) -> None:
         while not self._stop.is_set():
             try:
+                if not self._cfg_get("hot_push.enable", True) or not self._cfg_get(
+                    "hot_push.incremental.enable", True
+                ):
+                    logger.info("hot push: 增量推送已禁用，6 小时后再次检查")
+                    await self._sleep(6 * 3600)
+                    continue
                 await self._recover_hot_states()
                 n = _now()
                 next_time = await self._maybe_incr_hot_push(today=n.strftime("%Y-%m-%d"))
@@ -239,11 +276,11 @@ class Scheduler:
             try:
                 n = _now()
                 await self._maybe_sign(now=n.strftime("%Y-%m-%d %H:%M"), today=n.strftime("%Y-%m-%d"))
-                target = self._cfg_get("sign.time", "10:00")
-                hour, minute = (int(x) for x in str(target).split(":"))
-                next_sec = ((23 - n.hour) * 3600 + (59 - n.minute) * 60 + (60 - n.second)) % 86400
-                next_sec += hour * 3600 + minute * 60
-                await self._sleep(max(60, next_sec) + random.uniform(0, 300))
+                next_sec = _target_sleep_seconds(n, str(self._cfg_get("sign.time", "10:00")))
+                if next_sec is None:
+                    logger.error("sign failed: sign.time 配置格式错误，1 小时后重试")
+                    next_sec = 3600
+                await self._sleep(next_sec + random.uniform(0, 300))
             except Exception:
                 await self._sleep(300)
 
