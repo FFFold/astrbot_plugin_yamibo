@@ -97,40 +97,53 @@ class Scheduler:
             logger.error("sign failed: %s", e)
 
     # ---- 热帖：全量日报 ----
-    async def _maybe_daily_hot_push(self, *, today: str, now_time: str) -> bool:
-        """推送全量日报。返回 True 表示无需短间隔重试（已送达/未到点/已推/禁用）。"""
+    async def _maybe_daily_hot_push(self, *, today: str, now_time: str) -> int | None:
+        """推送全量日报。
+
+        返回 None = 无需短间隔重试（已送达/无订阅会话/未到点/已推/禁用）；
+        返回秒数 = 该间隔后重试（空榜/普通异常 15 分钟，cookie 失效 60 分钟）。
+        """
         if not self._cfg_get("hot_push.enable", True) or not self._cfg_get("hot_push.daily.enable", True):
-            return True
+            return None
         target = str(self._cfg_get("hot_push.daily.time", "20:00"))
         hm = _parse_hhmm(target)
         if hm is None:
             logger.error("hot push: daily.time 配置格式错误: %r", target)
-            return True
+            return None
         hour, minute = hm
         if int(now_time[:2]) * 60 + int(now_time[3:]) < hour * 60 + minute:
-            return True
+            return None
         if self._hot_daily_date == today:
-            return True
+            return None
         try:
             items = await self._client.get_hot_threads(int(self._cfg_get("hot_push.count", 10)))
             if not items:
                 logger.warning("hot push: 全量推送时榜单为空，15 分钟后重试")
-                return False
+                return 15 * 60
             from yamibo.utils import fmt_list
 
             text = fmt_list("百合会 · 今日热度榜", items, hot=True)
-            await self._push_to_targets(text)
+            targets = await self._sub.hot_targets()
+            if not targets:
+                self._hot_daily_date = today
+                await self._sub.save_hot_daily_state(today)
+                logger.info("hot push: 全量日报无订阅会话，标记当日完成")
+                return None
+            delivered = await self._push_to_targets(text, targets)
+            if not delivered:
+                logger.warning("hot push: 全量日报未送达任何会话，15 分钟后重试（不标记已推）")
+                return 15 * 60
             self._hot_daily_date = today
             await self._sub.save_hot_daily_state(today)
             logger.info("hot push: 全量日报已推送 %d 条", len(items))
-            return True
+            return None
         except NotLoggedInError:
             logger.error("hot push failed: cookie 失效")
             await self._notify_auth_fail()
-            return False
+            return 60 * 60
         except Exception as e:
             logger.error("hot push failed: %s", e)
-            return False
+            return 15 * 60
 
     # ---- 热帖：增量雷达 ----
     async def _maybe_incr_hot_push(self, *, today: str):
@@ -203,18 +216,19 @@ class Scheduler:
     async def _run_daily_hot_loop(self) -> None:
         while not self._stop.is_set():
             try:
+                await self._recover_hot_states()  # 幂等；防 20:00 后重启当天重复推送
                 n = _now()
-                done = await self._maybe_daily_hot_push(
+                retry_in = await self._maybe_daily_hot_push(
                     today=n.strftime("%Y-%m-%d"), now_time=n.strftime("%H:%M")
                 )
-                if done:
-                    next_sec = _target_sleep_seconds(n, str(self._cfg_get("hot_push.daily.time", "20:00")))
-                    if next_sec is None:
-                        logger.error("hot push: daily.time 配置格式错误，1 小时后重试")
-                        next_sec = 3600
-                    await self._sleep(next_sec + random.uniform(0, 300))
-                else:
-                    await self._sleep(15 * 60)  # 失败/空榜：短间隔重试
+                if retry_in is not None:
+                    await self._sleep(retry_in)
+                    continue
+                next_sec = _target_sleep_seconds(n, str(self._cfg_get("hot_push.daily.time", "20:00")))
+                if next_sec is None:
+                    logger.error("hot push: daily.time 配置格式错误，1 小时后重试")
+                    next_sec = 3600
+                await self._sleep(next_sec + random.uniform(0, 300))
             except Exception:
                 await self._sleep(300)
 
@@ -234,10 +248,10 @@ class Scheduler:
             except Exception:
                 await self._sleep(300)
 
-    async def _push_to_targets(self, text: str) -> bool:
-        """推送全部订阅会话。返回是否至少送达一个会话。"""
+    async def _push_to_targets(self, text: str, targets: list[str] | None = None) -> bool:
+        """推送订阅会话。返回是否至少送达一个会话。"""
         delivered = False
-        for umo in await self._sub.hot_targets():
+        for umo in targets if targets is not None else await self._sub.hot_targets():
             try:
                 await self._send(umo, text)
                 delivered = True

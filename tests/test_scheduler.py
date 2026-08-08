@@ -149,8 +149,8 @@ async def test_daily_hot_unpadded_time(make_sched):
 async def test_daily_hot_empty_list_not_marked_done(make_sched):
     s, client, sub, rec = make_sched()
     client.hot_items = []
-    ok = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
-    assert ok is False
+    retry_in = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert retry_in == 15 * 60
     assert rec.sent == []
     assert sub.saved_daily == []
     assert s._hot_daily_date is None
@@ -163,17 +163,64 @@ async def test_daily_hot_network_error_retryable(make_sched):
         raise RuntimeError("network")
 
     client.get_hot_threads = boom
-    ok = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
-    assert ok is False
+    retry_in = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert retry_in == 15 * 60
     assert s._hot_daily_date is None
     # 恢复后重试成功
     async def ok_fetch(n):
         return client.hot_items[:n]
 
     client.get_hot_threads = ok_fetch
-    ok = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
-    assert ok is True
+    retry_in = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert retry_in is None
     assert len(rec.sent) == 1
+
+
+async def test_daily_hot_send_failure_not_marked_done(make_sched):
+    s, client, sub, rec = make_sched()
+
+    async def bad_send(umo, text):
+        raise RuntimeError("send failed")
+
+    s._send = bad_send
+    retry_in = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert retry_in == 15 * 60
+    assert s._hot_daily_date is None
+    assert sub.saved_daily == []
+    # 恢复后重试成功
+    s._send = rec.send
+    retry_in = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert retry_in is None
+    assert len(rec.sent) == 1
+
+
+async def test_daily_hot_no_targets_marked_done(make_sched):
+    s, client, sub, rec = make_sched()
+
+    async def no_targets():
+        return []
+
+    sub.hot_targets = no_targets
+    retry_in = await s._maybe_daily_hot_push(today="2026-08-08", now_time="20:00")
+    assert retry_in is None
+    assert s._hot_daily_date == "2026-08-08"
+    assert sub.saved_daily == ["2026-08-08"]
+    assert rec.sent == []
+
+
+async def test_daily_hot_recovers_state_from_kv(make_sched):
+    s, client, sub, rec = make_sched()
+
+    async def recover():
+        return "2026-08-08"
+
+    sub.get_hot_daily_state = recover
+    await s._recover_hot_states()
+    assert s._hot_daily_date == "2026-08-08"
+    # 20:00 后重启恢复：同天不再重复推送
+    retry_in = await s._maybe_daily_hot_push(today="2026-08-08", now_time="21:00")
+    assert retry_in is None
+    assert rec.sent == []
 
 
 # ---- 增量雷达 ----
