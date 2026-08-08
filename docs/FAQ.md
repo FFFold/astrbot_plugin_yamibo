@@ -49,7 +49,7 @@ Discuz 的登录态校验依赖 `auth + saltkey` 的组合。只填 `auth` 会�
 
 ### 容器部署时协议端读不到文件？
 
-AstrBot 与协议端分容器部署时，把 `comic.workdir` 配置为两者**共享卷**的目录（如 `/data/shared/yamibo`），PDF/图片会写入该目录。
+AstrBot 与协议端分容器部署时，把 `comic.workdir` 配置为两者**共享卷**的目录（如 `/data/shared/yamibo`），生成的 PDF 会写入该目录。
 
 ## 其他
 
