@@ -1,6 +1,10 @@
 
+from datetime import timedelta
+from pathlib import Path
+
 from yamibo.parser import (
     extract_formhash,
+    extract_rank_cache_next,
     parse_forum_threads,
     parse_hot_homepage,
     parse_my_records,
@@ -9,6 +13,8 @@ from yamibo.parser import (
     parse_sign_status,
     parse_thread,
 )
+
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 
 SIGN_UNSIGNED = """
 <div class="signbtn"><a class="btna" href="plugin.php?id=zqlj_sign&amp;sign=55e7ab08">点击打卡</a></div>
@@ -99,6 +105,22 @@ def test_parse_ranklist():
     assert items[0].tid == 519989
     assert items[0].reply_count == 138
     assert items[1].author == "snke"
+
+
+def test_extract_rank_cache_next():
+    html = (FIXTURE_DIR / "ranklist_heats_today.html").read_text(encoding="utf-8")
+    dt = extract_rank_cache_next(html)
+    assert dt is not None
+    assert (dt.year, dt.month, dt.day, dt.hour, dt.minute) == (2026, 8, 8, 19, 39)
+    assert dt.utcoffset() == timedelta(hours=8)
+
+
+def test_extract_rank_cache_next_missing():
+    assert extract_rank_cache_next("<html><body>no cache line</body></html>") is None
+
+
+def test_extract_rank_cache_next_malformed():
+    assert extract_rank_cache_next("下次将于 2026-13-40 99:99 进行更新") is None
 
 
 def test_parse_forum_threads():

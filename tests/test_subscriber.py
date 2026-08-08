@@ -75,6 +75,19 @@ async def test_hot_targets(store, sub):
     assert await sub.remove_hot_target(UMO_A) is True
 
 
-async def test_hot_state(store, sub):
-    await sub.save_hot_state("2026-08-07", [1, 2])
-    assert await sub.get_hot_state() == ("2026-08-07", [1, 2])
+async def test_hot_states_roundtrip(store, sub):
+    from yamibo.hotpush import IncrState
+
+    await sub.save_hot_daily_state("2026-08-08")
+    assert await sub.get_hot_daily_state() == "2026-08-08"
+
+    await sub.save_hot_incr_state(IncrState(date="2026-08-08", pushed_tids=[1], last_tids=[1, 2]))
+    st = await sub.get_hot_incr_state()
+    assert st is not None
+    assert st.date == "2026-08-08"
+    assert st.pushed_tids == [1]
+    assert st.last_tids == [1, 2]
+
+    empty = Subscriber(InMemoryStore())
+    assert await empty.get_hot_daily_state() is None
+    assert await empty.get_hot_incr_state() is None

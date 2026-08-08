@@ -74,8 +74,8 @@ def test_fmt_list_threads():
 
 def test_fmt_list_hot():
     items = [HotItem(tid=519989, title="汇总", author="hongyuny", reply_count=138)]
-    out = fmt_list("本周热帖", items, hot=True)
-    assert "1. 汇总（回复 138） https://bbs.yamibo.com/thread-519989-1-1.html" in out
+    out = fmt_list("今日热度榜", items, hot=True)
+    assert "1. 汇总（热度 138） https://bbs.yamibo.com/thread-519989-1-1.html" in out
 
 
 def test_fmt_list_limit():

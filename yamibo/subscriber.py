@@ -9,7 +9,8 @@ from yamibo.models import Subscription
 SCHEMA = 1
 _KEY_SUBS = "subs"
 _KEY_HOT_TARGETS = "hot_targets"
-_KEY_HOT_STATE = "hot_state"
+_KEY_HOT_DAILY = "hot_daily_state"
+_KEY_HOT_INCR = "hot_incr_state"
 
 
 class KVStore:
@@ -178,11 +179,32 @@ class Subscriber:
         data = await self._load(_KEY_HOT_TARGETS)
         return list(data.get("items", []))
 
-    async def save_hot_state(self, date: str, tids: list[int]) -> None:
-        await self._save(_KEY_HOT_STATE, {"schema": SCHEMA, "date": date, "tids": tids})
+    async def save_hot_daily_state(self, date: str) -> None:
+        await self._save(_KEY_HOT_DAILY, {"schema": SCHEMA, "date": date})
 
-    async def get_hot_state(self) -> tuple[str, list[int]] | None:
-        data = await self._load(_KEY_HOT_STATE)
+    async def get_hot_daily_state(self) -> str | None:
+        data = await self._load(_KEY_HOT_DAILY)
+        return data.get("date") or None
+
+    async def save_hot_incr_state(self, state) -> None:
+        await self._save(
+            _KEY_HOT_INCR,
+            {
+                "schema": SCHEMA,
+                "date": state.date,
+                "pushed_tids": list(state.pushed_tids),
+                "last_tids": list(state.last_tids),
+            },
+        )
+
+    async def get_hot_incr_state(self):
+        from yamibo.hotpush import IncrState
+
+        data = await self._load(_KEY_HOT_INCR)
         if not data.get("date"):
             return None
-        return data["date"], list(data.get("tids", []))
+        return IncrState(
+            date=data["date"],
+            pushed_tids=list(data.get("pushed_tids", [])),
+            last_tids=list(data.get("last_tids", [])),
+        )

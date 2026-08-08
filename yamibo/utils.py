@@ -58,7 +58,7 @@ def fmt_list(
     lines = [f"【{title}】"]
     for i, it in enumerate(rows, 1):
         if hot:
-            reply = f"（回复 {it.reply_count}）" if getattr(it, "reply_count", 0) else ""
+            reply = f"（热度 {it.reply_count}）" if getattr(it, "reply_count", 0) else ""
             url = f"https://bbs.yamibo.com/thread-{it.tid}-1-1.html"
             lines.append(f"{i}. {truncate(it.title, 40)}{reply} {url}")
         else:

@@ -44,8 +44,9 @@ async def main() -> None:
         html4 = await client.get_text("/forum.php?mod=viewthread&tid=574233&authorid=731857&ordertype=1")
         tc4 = parse_thread(html4, 574233)
         print(f"OK: 只看楼主视图 {len(tc4.floors)} 楼")
-        hot = await client.get_hot_threads(5)
+        hot, next_time = await client.get_hot_rank(5)
         print(f"OK: 热帖 {len(hot)} 条，第一条: {hot[0].title[:30] if hot else 'N/A'}")
+        print(f"OK: 下次榜单缓存更新: {next_time}")
     finally:
         await client.close()
 

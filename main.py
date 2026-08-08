@@ -189,14 +189,14 @@ class AstrBotPlugin(Star):
     # ---- 指令：公开 ----
     @yamibo.command("热帖")
     async def hot_now(self, event: AstrMessageEvent, n: int = 10):
-        """本周热帖。"""
+        """今日热度榜。"""
         if not self.client:
             yield event.plain_result("插件未初始化")
             return
         n = max(1, min(n, 30))
         try:
             items = await self.client.get_hot_threads(n)
-            yield event.plain_result(fmt_list("百合会 · 本周热帖", items, hot=True) if items else "暂无数据")
+            yield event.plain_result(fmt_list("百合会 · 今日热度榜", items, hot=True) if items else "暂无数据")
         except Exception as e:
             logger.error(f"yamibo hot error: {e}")
             yield event.plain_result(f"获取失败: {e}")
