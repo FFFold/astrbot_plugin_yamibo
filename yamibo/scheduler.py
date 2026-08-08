@@ -255,8 +255,8 @@ class Scheduler:
             try:
                 await self._send(umo, text)
                 delivered = True
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("hot push: failed to send to target %r: %r", umo, exc)
         return delivered
 
     async def _notify_auth_fail(self) -> None:
