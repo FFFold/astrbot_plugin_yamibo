@@ -62,6 +62,7 @@ def fmt_list(
                 line += f" — {author}"
             if t:
                 line += f" ({t})"
+            line += f" https://bbs.yamibo.com/thread-{it.tid}-1-1.html"
             lines.append(line)
     if len(all_rows) > limit:
         lines.append(f"⋯ 共 {len(all_rows)} 条，仅显示前 {limit} 条")

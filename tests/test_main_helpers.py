@@ -49,8 +49,8 @@ def test_fmt_list_threads():
     ]
     out = fmt_list("貼圖區 · 第1页", items)
     assert "【貼圖區 · 第1页】" in out
-    assert "1. 短标题 — 甲 (08-07)" in out
-    assert "2. 标题 — 乙 (2020-05-11)" in out
+    assert "1. 短标题 — 甲 (08-07) https://bbs.yamibo.com/thread-1-1-1.html" in out
+    assert "2. 标题 — 乙 (2020-05-11) https://bbs.yamibo.com/thread-2-1-1.html" in out
 
 
 def test_fmt_list_hot():

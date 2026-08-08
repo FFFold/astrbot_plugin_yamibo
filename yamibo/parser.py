@@ -10,6 +10,27 @@ FORMHASH_RE = re.compile(r"formhash=([a-f0-9]{8})")
 
 BBS_ORIGIN = "https://bbs.yamibo.com"
 LOGIN_PROMPT_MARKERS = ("您需要登录", "提示信息")
+TIME_PAT_RE = re.compile(r"\d{4}-\d{1,2}-\d{1,2}(?: \d{1,2}:\d{2})?")
+PADDING_TOKEN_RE = re.compile(r"[\s%^&*+~'`\"\-/\\@!?.,;:()\[\]<>_=|{}]+")
+
+
+def _is_padding_line(line: str) -> bool:
+    r"""识别 Discuz 反灌水随机字符填充行（如 `" Y3 N- A8 V/ \+ @ F% ^% V`）。
+
+    判定：无 CJK 字符，且所有分词（按符号切分）长度均 <= 2。
+    自然英文句子（单词较长）与含中文的行不会被误杀。
+    """
+    line = line.strip()
+    if not line or len(line) < 5:
+        return False
+    if re.search(r"[\u4e00-\u9fff]", line):
+        return False
+    tokens = [t for t in PADDING_TOKEN_RE.split(line) if t]
+    return bool(tokens) and all(len(t) <= 2 for t in tokens)
+
+
+def _clean_padding(text: str) -> str:
+    return "\n".join(ln for ln in text.splitlines() if not _is_padding_line(ln))
 
 
 def extract_formhash(html: str) -> str | None:
@@ -131,15 +152,18 @@ def parse_thread(html: str, tid: int, *, skip_hidden: bool = True) -> ThreadCont
         author_name = authi.get_text(strip=True) if authi else ""
         num_el = post.select_one(f"#postnum{pid} em")
         floor = _safe_int(num_el.get_text()) if num_el else 0
-        time_el = post.select_one(f"#authorposton{pid} span")
-        time_str = time_el.get_text(strip=True) if time_el else ""
+        ap_el = post.select_one(f"#authorposton{pid}")
+        time_str = ""
+        if ap_el:
+            m = TIME_PAT_RE.search(ap_el.get_text(" ", strip=True))
+            time_str = m.group(0) if m else ""
         msg = post.select_one(f"#postmessage_{pid}")
         if not msg:
             continue
         if skip_hidden:
             for locked in msg.select(".locked, blockquote[class*=lock]"):
                 locked.decompose()
-        text = msg.get_text("\n", strip=True)
+        text = _clean_padding(msg.get_text("\n", strip=True))
         images: list[str] = []
         for img in msg.select("img"):
             src = img.get("zoomfile") or img.get("src")

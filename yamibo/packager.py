@@ -63,7 +63,10 @@ class Packager:
 
     @staticmethod
     def build_pdf(files: list[Path], out: Path) -> Path:
-        out.write_bytes(img2pdf.convert([str(f) for f in files]))
+        # 部分论坛图片 EXIF Orientation 为无效值(0)，用 ifvalid 忽略
+        out.write_bytes(
+            img2pdf.convert([str(f) for f in files], rotation=img2pdf.Rotation.ifvalid)
+        )
         return out
 
     @staticmethod

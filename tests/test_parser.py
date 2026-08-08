@@ -167,6 +167,41 @@ def test_parse_thread_not_logged_in():
     assert len(tc.floors) == 0
 
 
+THREAD_OP_NO_SPAN = """
+<div id="postlist"><div id="post_1001">
+<table><tr><td><div id="favatar1001" class="pls"><div class="authi"><a href="space-uid-731857.html">crystar23</a></div></div></td>
+<td><div id="postnum1001"><em>1</em></div><div id="authorposton1001">2026-7-27 19:46</div>
+<div id="postmessage_1001" class="t_f">正文内容</div></td></tr></table></div></div>
+"""
+
+THREAD_PADDING = r"""
+<div id="postlist"><div id="post_1001">
+<table><tr><td><div id="favatar1001" class="pls"><div class="authi"><a href="space-uid-731857.html">crystar23</a></div></div></td>
+<td><div id="postnum1001"><em>1</em></div><div id="authorposton1001"><span>2026-7-27 19:46</span></div>
+<div id="postmessage_1001" class="t_f">
+正文第一行
+" Y3 N- A8 V/ \+ @  F% ^% V
+) W+ o0 K* a( _# P( v/ ^! U. Y/ Q
+请支持我们小狗🐟和茉里！
+Please support us and keep translating.
+</div></td></tr></table></div></div>
+"""
+
+
+def test_parse_thread_time_without_span():
+    tc = parse_thread(THREAD_OP_NO_SPAN, tid=1)
+    assert tc.floors[0].time == "2026-7-27 19:46"
+
+
+def test_parse_thread_padding_cleaned():
+    tc = parse_thread(THREAD_PADDING, tid=1)
+    text = tc.floors[0].text
+    assert "Y3" not in text
+    assert "正文第一行" in text
+    assert "请支持我们小狗" in text
+    assert "Please support us and keep translating." in text
+
+
 SEARCH_RESULT = """
 <div class="tl">
 <div class="sttl mbn"><h2>搜索: <em>找到 <span class="emfont">百合</span> 相关 376 个</em></h2></div>
