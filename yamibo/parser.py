@@ -30,6 +30,11 @@ def parse_sign_status(html: str) -> SignStatus:
     return SignStatus(signed_today=False)
 
 
+def _safe_int(text: str | None) -> int:
+    m = re.search(r"\d+", text or "")
+    return int(m.group()) if m else 0
+
+
 def _tid_from_href(href: str) -> int | None:
     m = TID_RE.search(href or "")
     return int(m.group(1)) if m else None
@@ -125,7 +130,7 @@ def parse_thread(html: str, tid: int, *, skip_hidden: bool = True) -> ThreadCont
         uid_m = UID_RE.search(str(authi)) if authi else None
         author_name = authi.get_text(strip=True) if authi else ""
         num_el = post.select_one(f"#postnum{pid} em")
-        floor = int(re.sub(r"\D", "", num_el.get_text())) if num_el else 0
+        floor = _safe_int(num_el.get_text()) if num_el else 0
         time_el = post.select_one(f"#authorposton{pid} span")
         time_str = time_el.get_text(strip=True) if time_el else ""
         msg = post.select_one(f"#postmessage_{pid}")
@@ -162,9 +167,10 @@ def parse_thread(html: str, tid: int, *, skip_hidden: bool = True) -> ThreadCont
 
 
 def parse_search_results(html: str) -> list[ThreadSummary]:
+    """解析搜索结果。结果容器为 div#threadlist（class=slst mtw）。"""
     soup = BeautifulSoup(html, "html.parser")
     items: list[ThreadSummary] = []
-    for li in soup.select("#searchresult li.pbw"):
+    for li in soup.select("#threadlist li.pbw, #searchresult li.pbw"):
         a = li.select_one("h3 a")
         if not a:
             continue
@@ -192,7 +198,7 @@ def parse_search_results(html: str) -> list[ThreadSummary]:
 def parse_my_records(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     table = soup.select_one("table.dt.mtm")
-    rows = table.select("tbody tr") if table else []
+    rows = table.find_all("tr") if table else []
     result = {"count": 0, "last_time": "", "last_reward": ""}
     if len(rows) > 1:
         cells = rows[1].find_all("td")

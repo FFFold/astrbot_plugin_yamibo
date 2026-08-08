@@ -12,7 +12,6 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 
 from yamibo.client import ForumClient, NotLoggedInError, WafError
-from yamibo.models import HotItem
 from yamibo.packager import Packager, build_forward_chunks, ensure_safe_filename
 from yamibo.parser import (
     parse_forum_threads,
@@ -22,11 +21,22 @@ from yamibo.parser import (
 )
 from yamibo.scheduler import Scheduler
 from yamibo.subscriber import Subscriber
-from yamibo.utils import cfg_get, cooldown_ok, parse_tid_input
+from yamibo.utils import cfg_get, cooldown_ok, fmt_list, parse_tid_input
 
-FORUM_NAMES = {
+# fid -> 显示名；查找支持繁体/简体/常见简称
+FORUM_NAMES: dict[str, str] = {
     "5": "動漫區", "13": "貼圖區", "33": "海域區", "49": "文學區",
     "44": "遊戲區", "379": "影視區", "19": "資源交流區", "16": "管理版",
+}
+FORUM_ALIASES: dict[str, str] = {
+    "动漫区": "5", "動漫區": "5", "动漫": "5",
+    "贴图区": "13", "貼圖區": "13", "贴图": "13",
+    "海域区": "33", "海域區": "33", "海域": "33",
+    "文学区": "49", "文學區": "49", "文学": "49",
+    "游戏区": "44", "遊戲區": "44", "游戏": "44",
+    "影视区": "379", "影視區": "379", "影视": "379",
+    "资源交流区": "19", "資源交流區": "19", "资源": "19",
+    "管理版": "16",
 }
 
 DEFAULT_UA = (
@@ -35,19 +45,12 @@ DEFAULT_UA = (
 )
 
 
-def fmt_hot(items: list[HotItem]) -> str:
-    lines = ["【百合会热帖】"]
-    for i in items:
-        reply = f"（回复 {i.reply_count}）" if i.reply_count else ""
-        lines.append(f"{i.title}{reply} https://bbs.yamibo.com/thread-{i.tid}-1-1.html")
-    return "\n".join(lines)
-
-
-def fmt_thread_list(items) -> str:
-    lines = ["【帖子列表】"]
-    for i in items:
-        lines.append(f"{i.tid} | {i.title} | {i.author} | {i.last_reply_time}")
-    return "\n".join(lines)
+def resolve_fid(raw: str) -> str | None:
+    """版块参数解析：数字 fid、繁体/简体名称/简称。无法识别返回 None。"""
+    raw = (raw or "").strip()
+    if raw.isdigit():
+        return raw if raw in FORUM_NAMES else None
+    return FORUM_ALIASES.get(raw)
 
 
 class AstrBotPlugin(Star):
@@ -192,7 +195,7 @@ class AstrBotPlugin(Star):
         n = max(1, min(n, 30))
         try:
             items = await self.client.get_hot_threads(n)
-            yield event.plain_result(fmt_hot(items) if items else "暂无数据")
+            yield event.plain_result(fmt_list("百合会 · 本周热帖", items, hot=True) if items else "暂无数据")
         except Exception as e:
             logger.error(f"yamibo hot error: {e}")
             yield event.plain_result(f"获取失败: {e}")
@@ -211,11 +214,15 @@ class AstrBotPlugin(Star):
 
     @yamibo.command("版块")
     async def forum_list(self, event: AstrMessageEvent, fid: str = "13", sort: str = "hot", page: int = 1):
-        """版块帖子列表。fid 支持数字或名称，sort=hot|new。"""
+        """版块帖子列表。fid 支持数字/繁体/简体名称，sort=hot|new。"""
         if not self.client:
             yield event.plain_result("插件未初始化")
             return
-        fid_num = fid if str(fid).isdigit() else next((k for k, v in FORUM_NAMES.items() if v == str(fid)), "13")
+        fid_num = resolve_fid(fid)
+        if not fid_num:
+            names = "、".join(FORUM_NAMES.values())
+            yield event.plain_result(f"无法识别版块「{fid}」。可用：{names}（或输入 fid 数字）")
+            return
         page = max(1, min(page, 50))
         sort_param = "heat" if sort == "hot" else "lastpost"
         try:
@@ -224,9 +231,12 @@ class AstrBotPlugin(Star):
             )
             items = parse_forum_threads(html)
             name = FORUM_NAMES.get(str(fid_num), f"fid{fid_num}")
-            result = [f"【{name}】第{page}页"]
-            result.extend(fmt_thread_list(items).splitlines()[1:])
-            yield event.plain_result("\n".join(result) if items else f"【{name}】暂无帖子")
+            sort_name = "热度" if sort == "hot" else "最新"
+            if not items:
+                yield event.plain_result(f"【{name}】第{page}页（{sort_name}）暂无帖子")
+                return
+            footer = f"翻页：/yamibo 版块 {fid} {sort} {page + 1}"
+            yield event.plain_result(fmt_list(f"{name} · 第{page}页 · {sort_name}", items, footer=footer))
         except Exception as e:
             logger.error(f"yamibo forum error: {e}")
             yield event.plain_result(f"获取失败: {e}")
@@ -254,7 +264,14 @@ class AstrBotPlugin(Star):
                 f"/search.php?mod=forum&searchsubmit=yes&srchtxt={quote(keyword)}&srchtype=title&formhash={formhash}"
             )
             items = parse_search_results(html)
-            yield event.plain_result(fmt_thread_list(items[:10]) if items else "无搜索结果")
+            if items:
+                yield event.plain_result(fmt_list(f"搜索：{keyword}", items))
+            elif "抱歉" in html or "没有找到" in html:
+                yield event.plain_result(f"未找到与「{keyword}」相关的帖子。")
+            elif "threadlist" not in html:
+                yield event.plain_result("搜索失败或触发论坛频率限制，请稍后再试。")
+            else:
+                yield event.plain_result(f"未找到与「{keyword}」相关的帖子。")
         except Exception as e:
             logger.error(f"yamibo search error: {e}")
             yield event.plain_result(f"搜索失败: {e}")
@@ -327,41 +344,51 @@ class AstrBotPlugin(Star):
                 is_aiocq = event.get_platform_name() == "aiocqhttp"
                 try:
                     if deliver == "fwd" or (deliver == "auto" and is_aiocq):
-                        await self._send_forward(event, files, tid_num, tc.title)
+                        self_id = getattr(event, "get_self_id", lambda: 10000)() or 10000
+                        chains = await self._build_forward_chains(files, tid_num, tc.title, self_id)
+                        for i, nodes in enumerate(chains):
+                            yield event.chain_result(nodes)
+                            if i < len(chains) - 1:
+                                await asyncio.sleep(2)
                     else:
-                        await self._send_pdf(event, files, tid_num, tc.title)
+                        out, over_size = self._build_pdf(files, tid_num, tc.title)
+                        if over_size:
+                            for f in files[:20]:
+                                yield event.image_result(str(f))
+                            yield event.plain_result("PDF 超过大小限制，已改为发送前 20 张图片")
+                        else:
+                            yield event.chain_result(out)
                 finally:
                     self.packager.cleanup(files[0].parent)
             except Exception as e:
                 logger.error(f"yamibo comic error: {e}")
                 yield event.plain_result(f"打包失败: {e}")
 
-    async def _send_pdf(self, event, files, tid_num: int, title: str):
+    def _build_pdf(self, files, tid_num: int, title: str) -> tuple[list, bool]:
+        """生成 PDF。返回 (chain 组件列表, 是否超限)。"""
         import astrbot.api.message_components as Comp
 
         out = files[0].parent / f"{ensure_safe_filename(title or str(tid_num))}.pdf"
         Packager.build_pdf(files, out)
-        if out.stat().st_size > int(cfg_get(self.config, "comic.max_file_size_mb", 45)) * 1024 * 1024:
-            for f in files[:20]:
-                yield event.image_result(str(f))
-            yield event.plain_result("PDF 超过大小限制，已改为发送前 20 张图片")
-            return
-        yield event.chain_result([Comp.File(file=str(out), name=out.name)])
+        limit = int(cfg_get(self.config, "comic.max_file_size_mb", 45)) * 1024 * 1024
+        if out.stat().st_size > limit:
+            return [], True
+        return [Comp.File(file=str(out), name=out.name)], False
 
-    async def _send_forward(self, event, files, tid_num: int, title: str):
+    async def _build_forward_chains(self, files, tid_num: int, title: str, self_id: int) -> list[list]:
+        """生成合并转发节点批次（每批 100 节点）。"""
         import astrbot.api.message_components as Comp
 
         chunks = build_forward_chunks(files)
         sender_name = f"百合会-{title[:20]}" if title else f"百合会-{tid_num}"
-        self_id = getattr(event, "get_self_id", lambda: 10000)() or 10000
-        for i, chunk in enumerate(chunks):
+        chains: list[list] = []
+        for chunk in chunks:
             nodes = [
                 Comp.Node(uin=self_id, name=sender_name, content=[Comp.Image.fromFileSystem(str(f))])
                 for f in chunk
             ]
-            yield event.chain_result(nodes)
-            if i < len(chunks) - 1:
-                await asyncio.sleep(2)
+            chains.append(nodes)
+        return chains
 
     # ---- 指令：订阅 ----
     @yamibo.command("订阅")

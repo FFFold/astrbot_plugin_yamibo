@@ -1,8 +1,11 @@
 import re
 import time
+from collections.abc import Iterable
 from typing import Any
 
 TID_URL_RE = re.compile(r"(?:thread-(\d+)-|tid=(\d+))")
+TIME_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
+DEFAULT_LIMIT = 15
 
 
 def cfg_get(config: dict, path: str, default: Any = None) -> Any:
@@ -13,6 +16,58 @@ def cfg_get(config: dict, path: str, default: Any = None) -> Any:
             return default
         cur = cur.get(part)
     return cur if cur is not None else default
+
+
+def truncate(text: str, limit: int) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
+def fmt_time(raw: str) -> str:
+    """论坛时间格式化为紧凑显示：当年 MM-DD，跨年 YYYY-MM-DD。"""
+    m = TIME_RE.search(raw or "")
+    if not m:
+        return ""
+    year, month, day = m.group(1), m.group(2).zfill(2), m.group(3).zfill(2)
+    cur = time.strftime("%Y")
+    return f"{month}-{day}" if year == cur else f"{year}-{month}-{day}"
+
+
+def fmt_list(
+    title: str,
+    items: Iterable,
+    *,
+    hot: bool = False,
+    limit: int = DEFAULT_LIMIT,
+    footer: str = "",
+) -> str:
+    """统一帖子列表输出格式。hot=True 时每行附链接与回复数。"""
+    all_rows = list(items)
+    rows = all_rows[:limit]
+    lines = [f"【{title}】"]
+    for i, it in enumerate(rows, 1):
+        if hot:
+            reply = f"（回复 {it.reply_count}）" if getattr(it, "reply_count", 0) else ""
+            url = f"https://bbs.yamibo.com/thread-{it.tid}-1-1.html"
+            lines.append(f"{i}. {truncate(it.title, 40)}{reply} {url}")
+        else:
+            author = getattr(it, "author", "") or ""
+            t = fmt_time(getattr(it, "last_reply_time", "") or "")
+            line = f"{i}. {truncate(it.title, 40)}"
+            if author:
+                line += f" — {author}"
+            if t:
+                line += f" ({t})"
+            lines.append(line)
+    if len(all_rows) > limit:
+        lines.append(f"⋯ 共 {len(all_rows)} 条，仅显示前 {limit} 条")
+    if footer:
+        lines.append(footer)
+    return "\n".join(lines)
 
 
 def parse_tid_input(raw: str) -> int | None:

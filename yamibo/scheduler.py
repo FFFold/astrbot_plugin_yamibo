@@ -78,11 +78,9 @@ class Scheduler:
                 _, prev_tids = self._hot_state
                 fresh = [i for i in items if i.tid not in prev_tids]
                 if fresh:
-                    lines = ["【百合会热帖】"]
-                    for i in fresh:
-                        reply = f"（回复 {i.reply_count}）" if i.reply_count else ""
-                        lines.append(f"{i.title}{reply} https://bbs.yamibo.com/thread-{i.tid}-1-1.html")
-                    text = "\n".join(lines)
+                    from yamibo.utils import fmt_list
+
+                    text = fmt_list("百合会 · 本周热帖", fresh, hot=True)
                     await self._push_to_targets(text)
             self._hot_state = (today, tids)
             await self._sub.save_hot_state(today, tids)

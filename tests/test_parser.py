@@ -168,7 +168,10 @@ def test_parse_thread_not_logged_in():
 
 
 SEARCH_RESULT = """
-<div id="searchresult">
+<div class="tl">
+<div class="sttl mbn"><h2>搜索: <em>找到 <span class="emfont">百合</span> 相关 376 个</em></h2></div>
+<div class="slst mtw" id="threadlist">
+<ul>
 <li class="pbw" id="519989">
 <h3 class="xs3"><a href="forum.php?mod=viewthread&amp;tid=519989&amp;highlight=百合" target="_blank">中文<strong>百合</strong>漫画区汇总</a></h3>
 <p class="xg1">138 个回复 - 119 次查看</p>
@@ -179,15 +182,21 @@ SEARCH_RESULT = """
 <h3 class="xs3"><a href="forum.php?mod=viewthread&amp;tid=574689&amp;highlight=百合" target="_blank">【百合吧汉化组】Baby On Board</a></h3>
 <p class="xg1">1 个回复 - 74 次查看</p>
 </li>
+</ul>
 </div>
+</div>
+"""
+
+SEARCH_NO_RESULT = """
+<div class="tl"><div class="sttl mbn"><h2>抱歉，没有找到匹配结果</h2></div></div>
 """
 
 MY_RECORDS = """
 <table class="dt mtm">
-<tbody><tr><th width="130">打卡时间</th><th>打卡固定奖励</th><th>打卡前N名奖励</th><th>连续打卡奖励</th><th>用户组额外奖励</th><th>节日额外奖励</th></tr>
+<tr><th width="130">打卡时间</th><th>打卡固定奖励</th><th>打卡前N名奖励</th><th>连续打卡奖励</th><th>用户组额外奖励</th><th>节日额外奖励</th></tr>
 <tr><td>2026-08-07 21:46:04</td><td>1对象</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
 <tr><td>2026-08-05 15:02:07</td><td>1对象</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
-</tbody></table>
+</table>
 """
 
 
@@ -197,6 +206,17 @@ def test_parse_search_results():
     assert items[0].tid == 519989
     assert items[0].reply_count == 138
     assert items[1].title.startswith("【百合吧汉化组】")
+
+
+def test_parse_search_no_result():
+    assert parse_search_results(SEARCH_NO_RESULT) == []
+
+
+def test_parse_thread_empty_floor_number():
+    html = THREAD_PAGE.replace('<div id="postnum1002"><em>2</em></div>', '<div id="postnum1002"><em></em></div>')
+    tc = parse_thread(html, tid=574233)
+    assert len(tc.floors) == 2
+    assert tc.floors[1].floor == 0
 
 
 def test_parse_my_records():
