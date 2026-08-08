@@ -60,22 +60,52 @@
     "type": "object",
     "items": {
       "enable": {
-        "description": "启用热帖定时推送",
-        "hint": "关闭后不轮询排行榜，已绑定会话不再收到推送",
+        "description": "启用热帖推送",
+        "hint": "总开关，关闭后不再轮询排行榜",
         "type": "bool",
         "default": true
       },
-      "interval_min": {
-        "description": "轮询间隔（分钟）",
-        "hint": "间隔越大对论坛越友好；默认 60 分钟",
-        "type": "int",
-        "default": 60
-      },
       "count": {
-        "description": "每次推送条数",
-        "hint": "每次推送的热帖数量，1~30",
+        "description": "榜单条数",
+        "hint": "每次抓取的榜单条数，1~30",
         "type": "int",
         "default": 10
+      },
+      "daily": {
+        "description": "全量日报",
+        "type": "object",
+        "items": {
+          "enable": {
+            "description": "启用每日全量推送",
+            "hint": "每天定时推送一次完整今日热度榜",
+            "type": "bool",
+            "default": true
+          },
+          "time": {
+            "description": "全量推送时间",
+            "hint": "东八区 HH:MM，默认 20:00",
+            "type": "string",
+            "default": "20:00"
+          }
+        }
+      },
+      "incremental": {
+        "description": "增量推送",
+        "type": "object",
+        "items": {
+          "enable": {
+            "description": "启用增量推送",
+            "hint": "榜单刷新后对比新进榜帖子并推送",
+            "type": "bool",
+            "default": true
+          },
+          "interval_min": {
+            "description": "兜底轮询间隔（分钟）",
+            "hint": "解析榜单刷新时间失败时使用；正常情况自动对齐榜单缓存",
+            "type": "int",
+            "default": 60
+          }
+        }
       }
     }
   },
