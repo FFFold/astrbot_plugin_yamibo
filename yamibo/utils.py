@@ -1,7 +1,18 @@
 import re
 import time
+from typing import Any
 
 TID_URL_RE = re.compile(r"(?:thread-(\d+)-|tid=(\d+))")
+
+
+def cfg_get(config: dict, path: str, default: Any = None) -> Any:
+    """按点号路径读取嵌套配置，如 cfg_get(config, "login.auth")。"""
+    cur: Any = config
+    for part in str(path).split("."):
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(part)
+    return cur if cur is not None else default
 
 
 def parse_tid_input(raw: str) -> int | None:

@@ -1,42 +1,167 @@
 {
-  "saltkey": {
-    "description": "EeqY_2132_saltkey（浏览器 DevTools → Application → Cookies → bbs.yamibo.com 复制，httpOnly 故 document.cookie 取不到）",
-    "type": "string",
-    "default": "",
-    "invisible": true
+  "login": {
+    "description": "论坛登录认证（必需）",
+    "type": "object",
+    "items": {
+      "auth": {
+        "description": "EeqY_2132_auth",
+        "hint": "浏览器登录百合会后，DevTools → Application → Cookies → bbs.yamibo.com，复制 EeqY_2132_auth 的值",
+        "type": "string",
+        "default": "",
+        "invisible": true
+      },
+      "saltkey": {
+        "description": "EeqY_2132_saltkey",
+        "hint": "httpOnly cookie，document.cookie 取不到，需在 DevTools 的 Cookies 面板中复制 EeqY_2132_saltkey 的值",
+        "type": "string",
+        "default": "",
+        "invisible": true
+      },
+      "user_agent": {
+        "description": "请求 UA",
+        "hint": "保持默认即可；若触发论坛风控，可改成你浏览器的完整 UA",
+        "type": "string",
+        "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+      },
+      "manual_nox_token": {
+        "description": "手动 WAF token（兜底）",
+        "hint": "仅当 WAF 自动求解失败时，填写浏览器 Cookie 中的 nox_jst_v1 值作为兜底；正常情况留空",
+        "type": "string",
+        "default": ""
+      },
+      "proxy": {
+        "description": "HTTP 代理（可选）",
+        "hint": "格式如 http://127.0.0.1:7890；留空表示直连",
+        "type": "string",
+        "default": ""
+      }
+    }
   },
-  "auth": {
-    "description": "EeqY_2132_auth",
-    "type": "string",
-    "default": "",
-    "invisible": true
+  "sign": {
+    "description": "自动签到",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用自动签到",
+        "hint": "关闭后不自动签到，仍可手动执行 /yamibo 签到",
+        "type": "bool",
+        "default": true
+      },
+      "time": {
+        "description": "签到时间",
+        "hint": "每天自动签到时间（东八区），格式 HH:MM，如 10:00",
+        "type": "string",
+        "default": "10:00"
+      }
+    }
   },
-  "user_agent": {
-    "description": "请求 UA",
-    "type": "string",
-    "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  "hot_push": {
+    "description": "热帖推送",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用热帖定时推送",
+        "hint": "关闭后不轮询排行榜，已绑定会话不再收到推送",
+        "type": "bool",
+        "default": true
+      },
+      "interval_min": {
+        "description": "轮询间隔（分钟）",
+        "hint": "间隔越大对论坛越友好；默认 60 分钟",
+        "type": "int",
+        "default": 60
+      },
+      "count": {
+        "description": "每次推送条数",
+        "hint": "每次推送的热帖数量，1~30",
+        "type": "int",
+        "default": 10
+      }
+    }
   },
-  "sign_enable": { "description": "自动签到", "type": "bool", "default": true },
-  "sign_time": { "description": "签到时间 (HH:MM, 东八区)", "type": "string", "default": "10:00" },
-  "hot_push_enable": { "description": "热帖定时推送", "type": "bool", "default": true },
-  "hot_push_interval_min": { "description": "热帖轮询间隔(分钟)", "type": "int", "default": 60 },
-  "hot_push_count": { "description": "每次推送条数", "type": "int", "default": 10 },
-  "sub_check_interval_min": { "description": "订阅轮询间隔(分钟)", "type": "int", "default": 30 },
-  "sub_text_max_len": { "description": "订阅楼层文本截断长度", "type": "int", "default": 2000 },
-  "sub_image_max": { "description": "订阅单楼层最多图片数", "type": "int", "default": 50 },
-  "deliver_mode": {
-    "description": "漫画发送方式: auto(aiocqhttp 合并转发, 其余 PDF)/pdf/merge_forward",
-    "type": "string",
-    "default": "auto",
-    "options": ["auto", "pdf", "merge_forward"]
+  "subscription": {
+    "description": "帖子订阅",
+    "type": "object",
+    "items": {
+      "check_interval_min": {
+        "description": "订阅轮询间隔（分钟）",
+        "hint": "检查所有订阅帖更新的间隔，默认 30 分钟",
+        "type": "int",
+        "default": 30
+      },
+      "text_max_len": {
+        "description": "楼层文本截断长度",
+        "hint": "订阅推送的文本超过该长度时截断，防止刷屏",
+        "type": "int",
+        "default": 2000
+      },
+      "image_max": {
+        "description": "单楼层图片上限",
+        "hint": "单个新楼层最多推送的图片数，超出部分不发送",
+        "type": "int",
+        "default": 50
+      }
+    }
   },
-  "max_pages": { "description": "漫画最大页数", "type": "int", "default": 300 },
-  "max_file_size_mb": { "description": "文件超限回退逐张发图(MB)", "type": "int", "default": 45 },
-  "download_concurrency": { "description": "图片并发下载数", "type": "int", "default": 4 },
-  "comic_cooldown_sec": { "description": "漫画命令冷却(秒)", "type": "int", "default": 60 },
-  "search_cooldown_sec": { "description": "搜索冷却(秒)", "type": "int", "default": 30 },
-  "skip_hidden_content": { "description": "跳过隐藏内容([hide]/购买)", "type": "bool", "default": true },
-  "manual_nox_token": { "description": "WAF 求解失败时手动提供 nox_jst_v1 兜底", "type": "string", "default": "" },
-  "notify_auth_fail": { "description": "cookie 失效时通知热帖绑定会话", "type": "bool", "default": false },
-  "proxy": { "description": "HTTP 代理(可选)", "type": "string", "default": "" }
+  "comic": {
+    "description": "漫画打包发送",
+    "type": "object",
+    "items": {
+      "deliver_mode": {
+        "description": "发送方式",
+        "hint": "auto：aiocqhttp 平台用 QQ 合并转发（每图一节点），其余平台用 PDF；可强制指定 pdf 或 merge_forward",
+        "type": "string",
+        "default": "auto",
+        "options": ["auto", "pdf", "merge_forward"]
+      },
+      "max_pages": {
+        "description": "最大页数",
+        "hint": "超过限制只打包前 N 页图片，防止超大漫画拖垮消息",
+        "type": "int",
+        "default": 300
+      },
+      "max_file_size_mb": {
+        "description": "文件大小上限（MB）",
+        "hint": "PDF 超过该大小回退为逐张发送前 20 张图片（部分平台如 Telegram 有 50MB 限制）",
+        "type": "int",
+        "default": 45
+      },
+      "download_concurrency": {
+        "description": "图片并发下载数",
+        "hint": "并发过高可能触发论坛风控，建议 2~8",
+        "type": "int",
+        "default": 4
+      }
+    }
+  },
+  "limits": {
+    "description": "频率限制与安全",
+    "type": "object",
+    "items": {
+      "comic_cooldown_sec": {
+        "description": "漫画命令冷却（秒）",
+        "hint": "同一会话两次 /yamibo 漫画 之间的最小间隔，防滥用",
+        "type": "int",
+        "default": 60
+      },
+      "search_cooldown_sec": {
+        "description": "搜索冷却（秒）",
+        "hint": "搜索易触发论坛风控，建议保持默认",
+        "type": "int",
+        "default": 30
+      },
+      "skip_hidden_content": {
+        "description": "跳过隐藏内容",
+        "hint": "跳过需要回复/购买才能查看的 [hide] 内容，避免违规传播受限内容",
+        "type": "bool",
+        "default": true
+      },
+      "notify_auth_fail": {
+        "description": "cookie 失效时通知",
+        "hint": "cookie 失效时向热帖绑定会话推送提示（注意这些会话可能包含非管理员用户，仅提示不含隐私）",
+        "type": "bool",
+        "default": false
+      }
+    }
+  }
 }

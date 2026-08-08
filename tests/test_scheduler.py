@@ -2,6 +2,7 @@ import pytest
 
 from yamibo.models import HotItem, SignStatus
 from yamibo.scheduler import Scheduler
+from yamibo.utils import cfg_get
 
 UMO = "aiocqhttp:group:111"
 
@@ -10,12 +11,17 @@ UMO = "aiocqhttp:group:111"
 def make_sched():
     def build(**overrides):
         cfg = {
-            "sign_enable": True, "sign_time": "10:00",
-            "hot_push_enable": True, "hot_push_interval_min": 60, "hot_push_count": 10,
-            "sub_check_interval_min": 30, "sub_text_max_len": 2000, "sub_image_max": 50,
-            "notify_auth_fail": False, "skip_hidden_content": True,
+            "sign": {"enable": True, "time": "10:00"},
+            "hot_push": {"enable": True, "interval_min": 60, "count": 10},
+            "subscription": {"check_interval_min": 30, "text_max_len": 2000, "image_max": 50},
+            "limits": {"skip_hidden_content": True, "notify_auth_fail": False},
         }
-        cfg.update(overrides)
+        for dotted, value in overrides.items():
+            cur = cfg
+            parts = dotted.split(".")
+            for part in parts[:-1]:
+                cur = cur.setdefault(part, {})
+            cur[parts[-1]] = value
 
         class FakeClient:
             def __init__(self):
@@ -66,7 +72,7 @@ def make_sched():
         client = FakeClient()
         sub = FakeSub()
         rec = Recorder()
-        s = Scheduler(client, sub, cfg, rec.send)
+        s = Scheduler(client, sub, lambda k, d=None: cfg_get(cfg, k, d), rec.send)
         return s, client, sub, rec
 
     return build

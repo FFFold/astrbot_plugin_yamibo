@@ -22,7 +22,7 @@ from yamibo.parser import (
 )
 from yamibo.scheduler import Scheduler
 from yamibo.subscriber import Subscriber
-from yamibo.utils import cooldown_ok, parse_tid_input
+from yamibo.utils import cfg_get, cooldown_ok, parse_tid_input
 
 FORUM_NAMES = {
     "5": "動漫區", "13": "貼圖區", "33": "海域區", "49": "文學區",
@@ -65,17 +65,17 @@ class AstrBotPlugin(Star):
     # ---- 初始化 ----
     async def _init_async(self) -> None:
         try:
-            if not self.config.get("auth") or not self.config.get("saltkey"):
+            if not cfg_get(self.config, "login.auth") or not cfg_get(self.config, "login.saltkey"):
                 logger.warning("yamibo: 未配置 auth/saltkey，功能不可用")
                 return
             self.client = ForumClient(
-                auth=str(self.config.get("auth", "")),
-                saltkey=str(self.config.get("saltkey", "")),
-                user_agent=str(self.config.get("user_agent", "")) or DEFAULT_UA,
-                proxy=str(self.config.get("proxy", "")),
+                auth=str(cfg_get(self.config, "login.auth", "")),
+                saltkey=str(cfg_get(self.config, "login.saltkey", "")),
+                user_agent=str(cfg_get(self.config, "login.user_agent", "")) or DEFAULT_UA,
+                proxy=str(cfg_get(self.config, "login.proxy", "")),
             )
             await self.client.start()
-            manual_token = str(self.config.get("manual_nox_token", "")).strip()
+            manual_token = str(cfg_get(self.config, "login.manual_nox_token", "")).strip()
             if manual_token:
                 self.client.set_manual_token(manual_token)
             from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -84,11 +84,13 @@ class AstrBotPlugin(Star):
             data_dir.mkdir(parents=True, exist_ok=True)
             self.packager = Packager(
                 self.client.session,
-                concurrency=int(self.config.get("download_concurrency", 4)),
+                concurrency=int(cfg_get(self.config, "comic.download_concurrency", 4)),
                 workdir=data_dir,
             )
             self.scheduler = Scheduler(
-                self.client, self.subscriber, dict(self.config), self._push,
+                self.client, self.subscriber,
+                lambda key, default=None: cfg_get(self.config, key, default),
+                self._push,
             )
             self.scheduler.start()
             logger.info("yamibo: 初始化完成")
@@ -237,7 +239,7 @@ class AstrBotPlugin(Star):
             return
         if not cooldown_ok(
             self._cool, f"search:{event.unified_msg_origin}",
-            int(self.config.get("search_cooldown_sec", 30)),
+            int(cfg_get(self.config, "limits.search_cooldown_sec", 30)),
         ):
             yield event.plain_result("搜索冷却中，请稍后再试。")
             return
@@ -299,7 +301,7 @@ class AstrBotPlugin(Star):
             return
         if not cooldown_ok(
             self._cool, f"comic:{event.unified_msg_origin}",
-            int(self.config.get("comic_cooldown_sec", 60)),
+            int(cfg_get(self.config, "limits.comic_cooldown_sec", 60)),
         ):
             yield event.plain_result("漫画命令冷却中，请稍后再试。")
             return
@@ -313,7 +315,7 @@ class AstrBotPlugin(Star):
                 if not urls:
                     yield event.plain_result("该帖没有可下载的图片")
                     return
-                urls = urls[: int(self.config.get("max_pages", 300))]
+                urls = urls[: int(cfg_get(self.config, "comic.max_pages", 300))]
                 yield event.plain_result(f"共 {len(urls)} 张图片，开始下载…")
                 files = await self.packager.download_images(
                     urls, f"comic_{tid_num}", referer=f"https://bbs.yamibo.com/thread-{tid_num}-1-1.html"
@@ -321,7 +323,7 @@ class AstrBotPlugin(Star):
                 if not files:
                     yield event.plain_result("图片下载失败")
                     return
-                deliver = mode or str(self.config.get("deliver_mode", "auto"))
+                deliver = mode or str(cfg_get(self.config, "comic.deliver_mode", "auto"))
                 is_aiocq = event.get_platform_name() == "aiocqhttp"
                 try:
                     if deliver == "fwd" or (deliver == "auto" and is_aiocq):
@@ -339,7 +341,7 @@ class AstrBotPlugin(Star):
 
         out = files[0].parent / f"{ensure_safe_filename(title or str(tid_num))}.pdf"
         Packager.build_pdf(files, out)
-        if out.stat().st_size > int(self.config.get("max_file_size_mb", 45)) * 1024 * 1024:
+        if out.stat().st_size > int(cfg_get(self.config, "comic.max_file_size_mb", 45)) * 1024 * 1024:
             for f in files[:20]:
                 yield event.image_result(str(f))
             yield event.plain_result("PDF 超过大小限制，已改为发送前 20 张图片")
