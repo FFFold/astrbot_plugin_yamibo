@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 文档
+
+- 说明全量日报与自动签到的定时抖动行为：在设定时间后 **0~5 分钟随机延迟**执行（避免每天同一时刻产生规律性请求），README 与配置 hint 同步；增量雷达无抖动，固定于榜单缓存更新后 5 分钟抓取
+
 ## [0.2.0] - 2026-08-08
 
 ### 新增
