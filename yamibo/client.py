@@ -2,12 +2,13 @@
 
 import re
 import time
+from datetime import datetime
 
 import aiohttp
 from aiohttp import ClientTimeout
 from yarl import URL
 
-from yamibo.parser import BBS_ORIGIN, extract_formhash, parse_ranklist, parse_sign_status
+from yamibo.parser import BBS_ORIGIN, extract_formhash, extract_rank_cache_next, parse_ranklist, parse_sign_status
 from yamibo.waf import WafSolver
 
 UID_RE = re.compile(r"discuz_uid\s*=\s*'(\d+)'")
@@ -180,11 +181,19 @@ class ForumClient:
             raise ForumError("签到页未找到 formhash")
         await self.get_text(f"/plugin.php?id=zqlj_sign&sign={formhash}")
 
+    async def get_hot_rank(self, n: int = 10) -> tuple[list, datetime | None]:
+        """今日热度榜（view=heats&orderby=today）。
+
+        返回 (Top-N 帖子, 下次缓存刷新时间或 None)。
+        页面页脚标注榜单缓存周期（约 5h），调度可据此对齐抓取时机。
+        """
+        html = await self.get_text("/misc.php?mod=ranklist&type=thread&view=heats&orderby=today")
+        return parse_ranklist(html)[:n], extract_rank_cache_next(html)
+
     async def get_hot_threads(self, n: int = 10) -> list:
-        """本周回帖排行热帖。"""
-        html = await self.get_text("/misc.php?mod=ranklist&type=thread&view=replies&orderby=thisweek")
-        items = parse_ranklist(html)
-        return items[:n]
+        """今日热度榜热帖（仅列表，供手动指令使用）。"""
+        items, _ = await self.get_hot_rank(n)
+        return items
 
     async def get_thread_author_view(self, tid: int, author_uid: int) -> str:
         """只看楼主视图（倒序，楼主最新楼层在前）。"""
