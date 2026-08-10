@@ -1,11 +1,32 @@
 import pytest
 
+from yamibo.client import NotLoggedInError
 from yamibo.hotpush import IncrState
-from yamibo.models import HotItem, SignStatus
+from yamibo.models import HotItem, SignStatus, Subscription
 from yamibo.scheduler import RANK_UPDATE_GRACE, Scheduler, _parse_hhmm, _target_sleep_seconds
 from yamibo.utils import cfg_get
 
 UMO = "aiocqhttp:group:111"
+
+SUB_AUTHOR_HTML = """
+<div id="postlist">
+<div id="post_2002">
+<table><tr>
+<td><div id="favatar2002" class="pls"><div class="authi"><a href="space-uid-7.html" target="_blank">op</a></div></div></td>
+<td><div id="postnum2002"><em>12</em></div>
+<div id="authorposton2002"><span>2026-8-9 10:00</span></div>
+<div id="postmessage_2002" class="t_f">楼主新楼层
+<img src="data/attachment/forum/202608/09/a.jpg" zoomfile="data/attachment/forum/202608/09/a.jpg" class="zoom">
+</div></td></tr></table>
+</div>
+</div>
+"""
+
+SUB_AUTHOR_TWO_IMAGES = SUB_AUTHOR_HTML.replace(
+    '<img src="data/attachment/forum/202608/09/a.jpg" zoomfile="data/attachment/forum/202608/09/a.jpg" class="zoom">',
+    '<img src="data/attachment/forum/202608/09/a.jpg" zoomfile="data/attachment/forum/202608/09/a.jpg" class="zoom">'
+    '<img src="data/attachment/forum/202608/09/b.jpg" zoomfile="data/attachment/forum/202608/09/b.jpg" class="zoom">',
+)
 
 
 @pytest.fixture
@@ -34,6 +55,7 @@ def make_sched():
                 self.signed_today = False
                 self.hot_items = [HotItem(tid=1, title="A"), HotItem(tid=2, title="B")]
                 self.next_update = None
+                self.sub_author_html = SUB_AUTHOR_HTML
 
             async def get_sign_status(self):
                 return "<html>", SignStatus(signed_today=self.signed_today)
@@ -47,23 +69,29 @@ def make_sched():
             async def get_hot_threads(self, n):
                 return self.hot_items[:n]
 
+            async def get_thread_author_view(self, tid, author_uid):
+                return self.sub_author_html
+
         class FakeSub:
             def __init__(self):
                 self.subs = []
                 self.saved_incr = []
                 self.saved_daily = []
+                self.baseline_updates = []
+                self.resets = []
+                self.bumps = []
 
             async def all(self):
                 return self.subs
 
             async def update_baseline(self, tid, *, floor, pid):
-                pass
+                self.baseline_updates.append((tid, floor, pid))
 
             async def bump_fail(self, tid):
-                pass
+                self.bumps.append(tid)
 
             async def reset_fail(self, tid):
-                pass
+                self.resets.append(tid)
 
             async def hot_targets(self):
                 return [UMO]
@@ -84,8 +112,8 @@ def make_sched():
             def __init__(self):
                 self.sent = []
 
-            async def send(self, umo, text):
-                self.sent.append((umo, text))
+            async def send(self, umo, text, images=None):
+                self.sent.append((umo, text, images or []))
 
         client = FakeClient()
         sub = FakeSub()
@@ -374,6 +402,95 @@ async def test_auth_fail_notify_disabled(make_sched):
     s, client, sub, rec = make_sched(**{"limits.notify_auth_fail": False})
     await s._notify_auth_fail()
     assert rec.sent == []
+
+
+# ---- 订阅轮询 ----
+
+def _sub(tid: int = 574233, last_floor: int = 3, subscribers=None) -> Subscription:
+    return Subscription(
+        id="s1", tid=tid, title="T", op_uid=7, op_name="op",
+        last_floor=last_floor, last_pid=5, only_op=True,
+        subscribers=subscribers or [UMO],
+    )
+
+
+async def test_sub_check_sends_text_and_images(make_sched):
+    s, client, sub, rec = make_sched()
+    await s._check_one(_sub())
+    assert len(rec.sent) == 1
+    umo, text, images = rec.sent[0]
+    assert umo == UMO
+    assert "【T】op 更新 L12" in text
+    assert "楼主新楼层" in text
+    assert "https://bbs.yamibo.com/thread-574233-1-1.html" in text
+    assert "含图片 1 张" in text
+    assert images == ["https://bbs.yamibo.com/data/attachment/forum/202608/09/a.jpg"]
+    assert sub.baseline_updates == [(574233, 12, 2002)]
+    assert sub.resets == [574233]
+
+
+async def test_sub_check_image_max_caps_sent_images(make_sched):
+    s, client, sub, rec = make_sched(**{"subscription.image_max": 1})
+    client.sub_author_html = SUB_AUTHOR_TWO_IMAGES
+    await s._check_one(_sub())
+    assert len(rec.sent) == 1
+    umo, text, images = rec.sent[0]
+    assert len(images) == 1
+    assert "含图片 1 张" in text
+
+
+async def test_sub_check_no_new_floors_no_send(make_sched):
+    s, client, sub, rec = make_sched()
+    await s._check_one(_sub(last_floor=12))
+    assert rec.sent == []
+    assert sub.resets == [574233]
+    assert sub.baseline_updates == []
+
+
+async def test_sub_check_all_send_failures_keep_baseline(make_sched, caplog):
+    s, client, sub, rec = make_sched()
+
+    async def bad_send(umo, text, images=None):
+        raise RuntimeError("boom")
+
+    s._send = bad_send
+    with caplog.at_level("WARNING"):
+        await s._check_one(_sub())
+    assert rec.sent == []
+    assert sub.baseline_updates == []
+    assert sub.resets == []
+    assert "boom" in caplog.text
+
+
+async def test_sub_check_partial_delivery_advances_baseline(make_sched):
+    s, client, sub, rec = make_sched()
+
+    async def bad_send(umo, text, images=None):
+        if umo == "telegram:chat:999":
+            raise RuntimeError("boom")
+        await rec.send(umo, text, images)
+
+    s._send = bad_send
+    sub_model = _sub(subscribers=[UMO, "telegram:chat:999"])
+    await s._check_one(sub_model)
+    assert len(rec.sent) == 1  # 一个会话送达即算送达
+    assert sub.baseline_updates == [(574233, 12, 2002)]
+    assert sub.resets == [574233]
+
+
+async def test_maybe_check_subs_continue_after_auth_fail(make_sched):
+    s, client, sub, rec = make_sched()
+    sub.subs = [_sub(tid=1), _sub(tid=2)]
+    checked = []
+
+    async def fake_check(model):
+        checked.append(model.tid)
+        if model.tid == 1:
+            raise NotLoggedInError("cookie 失效")
+
+    s._check_one = fake_check
+    await s._maybe_check_subs()
+    assert checked == [1, 2]  # 第 1 个订阅 cookie 失效不再中断本轮其余订阅
 
 
 # ---- 调度等待 ----

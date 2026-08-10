@@ -108,8 +108,13 @@ class AstrBotPlugin(Star):
         except Exception as e:
             logger.error(f"yamibo: 初始化失败: {e}")
 
-    async def _push(self, umo: str, text: str) -> None:
+    async def _push(self, umo: str, text: str, images: list[str] | None = None) -> None:
+        """推送文本 + 图片（订阅/热帖共用）。发送失败向上抛，由调度层决定游标语义。"""
+        import astrbot.api.message_components as Comp
+
         chain = MessageChain().message(text)
+        for url in images or []:
+            chain.append(Comp.Image.fromURL(url))
         await self.context.send_message(umo, chain)
 
     # ---- 指令：签到（管理员） ----

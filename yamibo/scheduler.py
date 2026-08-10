@@ -14,7 +14,8 @@ from yamibo.parser import TZ, parse_thread
 from yamibo.subscriber import Subscriber
 
 RANK_UPDATE_GRACE = 300  # 秒；榜单缓存更新时刻后等 5 分钟再抓，防源站 cron 延迟
-SendFn = Callable[[str, str], Awaitable[None]]
+# images 为该楼层的图片 URL 列表（已按 image_max 截断）；发送方负责按平台发送
+SendFn = Callable[[str, str, list[str]], Awaitable[None]]
 ConfigGet = Callable[[str, Any], Any]
 
 logger = logging.getLogger("yamibo")
@@ -278,7 +279,7 @@ class Scheduler:
         delivered = False
         for umo in targets if targets is not None else await self._sub.hot_targets():
             try:
-                await self._send(umo, text)
+                await self._send(umo, text, [])
                 delivered = True
             except Exception as exc:
                 logger.warning("hot push: failed to send to target %r: %r", umo, exc)
@@ -305,7 +306,7 @@ class Scheduler:
             except NotLoggedInError:
                 logger.error("sub check %s failed: cookie 失效", s.tid)
                 await self._notify_auth_fail()
-                return
+                continue  # 只跳过该订阅，其余订阅本轮继续检查
             except Exception as e:
                 logger.error("sub check %s failed: %s", s.tid, e)
                 await self._sub.bump_fail(s.tid)
@@ -320,22 +321,31 @@ class Scheduler:
         new_floors.sort(key=lambda f: f.floor)
         max_floor = new_floors[-1].floor
         max_pid = new_floors[-1].pid
+        text_max = int(self._cfg_get("subscription.text_max_len", 2000))
+        image_max = int(self._cfg_get("subscription.image_max", 50))
+        # 送达语义：任一目标送达即推进游标；全部失败则保留游标，下轮重试整批楼层
+        delivered = False
         for f in new_floors:
-            text = f.text[: int(self._cfg_get("subscription.text_max_len", 2000))]
+            text = f.text[:text_max]
             header = f"【{s.title}】{s.op_name} 更新 L{f.floor}"
             body = text if text.strip() else "(无文本)"
             url = f"https://bbs.yamibo.com/thread-{s.tid}-1-1.html"
             lines = [header, body, url]
-            images = f.images[: int(self._cfg_get("subscription.image_max", 50))]
+            images = f.images[:image_max]
             if images:
                 lines.append(f"（含图片 {len(images)} 张）")
+            content = "\n".join(lines)
             for umo in list(s.subscribers):
                 try:
-                    await self._send(umo, "\n".join(lines))
-                except Exception:
-                    pass
-        await self._sub.update_baseline(s.tid, floor=max_floor, pid=max_pid)
-        await self._sub.reset_fail(s.tid)
+                    await self._send(umo, content, images)
+                    delivered = True
+                except Exception as exc:
+                    logger.warning("sub check %s: 发送 L%d 到 %r 失败: %r", s.tid, f.floor, umo, exc)
+        if delivered:
+            await self._sub.update_baseline(s.tid, floor=max_floor, pid=max_pid)
+            await self._sub.reset_fail(s.tid)
+        else:
+            logger.warning("sub check %s: 全部订阅会话发送失败，保留游标，下轮重试", s.tid)
 
     # ---- 循环主体 ----
     async def _run_sign_loop(self) -> None:
