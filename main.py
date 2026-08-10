@@ -21,7 +21,14 @@ from yamibo.parser import (
 )
 from yamibo.scheduler import Scheduler
 from yamibo.subscriber import Subscriber
-from yamibo.utils import cfg_get, cooldown_ok, fmt_list, parse_tid_input, resolve_comic_workdir
+from yamibo.utils import (
+    cfg_get,
+    cooldown_ok,
+    fmt_comic_header,
+    fmt_list,
+    parse_tid_input,
+    resolve_comic_workdir,
+)
 
 # fid -> 显示名；查找支持繁体/简体/常见简称
 FORUM_NAMES: dict[str, str] = {
@@ -385,19 +392,28 @@ class AstrBotPlugin(Star):
     async def _build_forward_chains(self, files, tid_num: int, title: str, self_id: int) -> list[list]:
         """生成合并转发节点批次（每批 100 节点）。
 
-        注意：每条 chain 必须是单个 Comp.Nodes（内含全部节点），
+        首条节点为标题 + 原帖链接；注意每条 chain 必须是单个 Comp.Nodes（内含全部节点），
         aiocqhttp 适配器对 chain 中的每个 Node/Nodes 段分别发送一次转发。
         """
         import astrbot.api.message_components as Comp
 
-        chunks = build_forward_chunks(files)
+        chunks = build_forward_chunks(files, reserve=1)
         sender_name = f"百合会-{title[:20]}" if title else f"百合会-{tid_num}"
         chains: list[list] = []
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
             nodes = [
                 Comp.Node(uin=self_id, name=sender_name, content=[Comp.Image.fromFileSystem(str(f))])
                 for f in chunk
             ]
+            if i == 0:
+                nodes.insert(
+                    0,
+                    Comp.Node(
+                        uin=self_id,
+                        name=sender_name,
+                        content=[Comp.Plain(fmt_comic_header(title, tid_num))],
+                    ),
+                )
             chains.append([Comp.Nodes(nodes=nodes)])
         return chains
 

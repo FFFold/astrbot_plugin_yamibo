@@ -23,6 +23,20 @@ def test_build_forward_chunks():
     assert len(chunks[2]) == 50
 
 
+def test_build_forward_chunks_reserve():
+    # 首批预留 1 个槽位（头部节点），保证插入后每批仍 ≤ 100 节点
+    chunks = build_forward_chunks(FAKE_PATHS, reserve=1)
+    assert len(chunks) == 3
+    assert len(chunks[0]) == 99
+    assert len(chunks[1]) == 100
+    assert len(chunks[2]) == 51
+    # 图片数恰为整倍数时，首批 99 + 尾部 1，不产生 101 节点批次
+    exact = build_forward_chunks(FAKE_PATHS[:100], reserve=1)
+    assert len(exact) == 2
+    assert len(exact[0]) == 99
+    assert len(exact[1]) == 1
+
+
 def test_ensure_safe_filename():
     assert ensure_safe_filename('a/b\\c:d"e*f?g<h>i|j') == "abcdefghij"
     assert ensure_safe_filename("正常标题") == "正常标题"

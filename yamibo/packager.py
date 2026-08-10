@@ -19,8 +19,13 @@ def chunk_list(items: list, size: int) -> list[list]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
-def build_forward_chunks(files: list[Path]) -> list[list[Path]]:
-    return chunk_list(files, FORWARD_CHUNK)
+def build_forward_chunks(files: list[Path], *, reserve: int = 0) -> list[list[Path]]:
+    """按 FORWARD_CHUNK 分块；首批预留 reserve 个槽位（如用于插入头部节点），
+    保证首批插入头部后总节点数仍 ≤ FORWARD_CHUNK。"""
+    if not files:
+        return []
+    first, rest = files[: FORWARD_CHUNK - reserve], files[FORWARD_CHUNK - reserve :]
+    return [first] + chunk_list(rest, FORWARD_CHUNK)
 
 
 class Packager:

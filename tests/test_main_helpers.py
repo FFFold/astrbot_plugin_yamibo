@@ -4,6 +4,7 @@ from yamibo.models import HotItem, ThreadSummary
 from yamibo.utils import (
     cfg_get,
     cooldown_ok,
+    fmt_comic_header,
     fmt_list,
     fmt_time,
     parse_tid_input,
@@ -59,6 +60,16 @@ def test_fmt_time():
     assert fmt_time("2026-8-7 18:21") == "08-07"
     assert fmt_time("2020-5-11 18:00") == "2020-05-11"
     assert fmt_time("") == ""
+
+
+def test_fmt_comic_header():
+    out = fmt_comic_header("某漫画", 574233)
+    assert "【某漫画】" in out
+    assert "https://bbs.yamibo.com/thread-574233-1-1.html" in out
+    assert out.splitlines()[0] == "【某漫画】"
+    # 无标题/纯空白标题时兜底为帖子编号
+    assert fmt_comic_header("", 7).startswith("【帖子 7】")
+    assert fmt_comic_header("   ", 7).startswith("【帖子 7】")
 
 
 def test_fmt_list_threads():

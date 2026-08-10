@@ -78,6 +78,12 @@ def fmt_list(
     return "\n".join(lines)
 
 
+def fmt_comic_header(title: str, tid_num: int) -> str:
+    """漫画合并转发合集首条消息：标题 + 原帖链接。"""
+    head = (title or "").strip() or f"帖子 {tid_num}"
+    return f"【{head}】\n原帖：https://bbs.yamibo.com/thread-{tid_num}-1-1.html"
+
+
 def parse_tid_input(raw: str) -> int | None:
     raw = (raw or "").strip()
     if raw.isdigit():
