@@ -73,7 +73,7 @@ Discuz 搜索有风控。默认 30 秒冷却，若仍频繁触发，调大 `limi
 
 ### 插件的临时文件存在哪里？
 
-默认 `data/plugin_data/astrbot_plugin_yamibo/`，发送成功后自动清理；配置 `comic.workdir` 可自定义。
+默认 `data/plugin_data/astrbot_plugin_yamibo/`，发送后延迟 `comic.cleanup_delay_min` 分钟（默认 10）自动清理，给协议端留出异步读取文件的时间；配置 `comic.workdir` 可自定义。
 
 ### 支持哪些平台？
 
