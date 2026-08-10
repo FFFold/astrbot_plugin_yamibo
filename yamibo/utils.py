@@ -1,8 +1,12 @@
+import asyncio
 import re
 import time
 from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from yamibo.parser import TZ
 
 TID_URL_RE = re.compile(r"(?:thread-(\d+)-|tid=(\d+))")
 TIME_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
@@ -56,12 +60,15 @@ def truncate(text: str, limit: int) -> str:
 
 
 def fmt_time(raw: str) -> str:
-    """论坛时间格式化为紧凑显示：当年 MM-DD，跨年 YYYY-MM-DD。"""
+    """论坛时间格式化为紧凑显示：当年 MM-DD，跨年 YYYY-MM-DD。
+
+    当年/跨年以论坛时区（东八区，parser.TZ）为准，避免非东八区服务器误判。
+    """
     m = TIME_RE.search(raw or "")
     if not m:
         return ""
     year, month, day = m.group(1), m.group(2).zfill(2), m.group(3).zfill(2)
-    cur = time.strftime("%Y")
+    cur = datetime.now(TZ).strftime("%Y")
     return f"{month}-{day}" if year == cur else f"{year}-{month}-{day}"
 
 
@@ -125,3 +132,28 @@ def cooldown_ok(state: dict, key: str, seconds: int, *, now: float | None = None
         return False
     state[key] = now
     return True
+
+
+class AsyncLockRegistry:
+    """带容量上限的 asyncio.Lock 注册表（如按 tid 的互斥锁）。
+
+    超限时只淘汰**未持有**的锁：持有中的锁不会被换出，否则同一 key
+    的并发方会拿到不同锁对象绕过互斥。
+    """
+
+    def __init__(self, max_size: int = 64) -> None:
+        self._max = max_size
+        self._locks: dict[Any, asyncio.Lock] = {}
+
+    def get(self, key) -> asyncio.Lock:
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        if len(self._locks) > self._max:
+            for k, v in list(self._locks.items()):
+                if not v.locked():
+                    del self._locks[k]
+                if len(self._locks) <= self._max:
+                    break
+        return lock

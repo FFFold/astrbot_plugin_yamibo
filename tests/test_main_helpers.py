@@ -1,7 +1,10 @@
+from datetime import datetime
 from pathlib import Path
 
 from yamibo.models import HotItem, ThreadSummary
+from yamibo.parser import TZ
 from yamibo.utils import (
+    AsyncLockRegistry,
     build_push_chain,
     cfg_get,
     clamp_int,
@@ -93,6 +96,41 @@ def test_fmt_time():
     assert fmt_time("2026-8-7 18:21") == "08-07"
     assert fmt_time("2020-5-11 18:00") == "2020-05-11"
     assert fmt_time("") == ""
+
+
+def test_fmt_time_uses_bbs_tz_year():
+    """当年/跨年判定必须基于东八区年份，而非服务器本地年份。"""
+    cur = datetime.now(TZ).strftime("%Y")
+    expected = "08-07" if cur == "2026" else "2026-08-07"
+    assert fmt_time("2026-8-7 18:21") == expected
+    # 同年 → MM-DD；上一年 → YYYY-MM-DD
+    assert fmt_time(f"{cur}-1-5 08:00") == "01-05"
+    prev = str(int(cur) - 1)
+    assert fmt_time(f"{prev}-1-5 08:00") == f"{prev}-01-05"
+
+
+def test_lock_registry_reuses_same_lock():
+    reg = AsyncLockRegistry(max_size=4)
+    assert reg.get(1) is reg.get(1)
+
+
+def test_lock_registry_evicts_unlocked_beyond_cap():
+    reg = AsyncLockRegistry(max_size=4)
+    for i in range(10):
+        reg.get(i)
+    assert len(reg._locks) <= 4
+
+
+async def test_lock_registry_keeps_held_lock():
+    reg = AsyncLockRegistry(max_size=2)
+    l0 = reg.get(0)
+    async with l0:
+        for i in range(1, 8):
+            reg.get(i)
+        # 持有中的锁不会被淘汰（否则同一 tid 会拿到不同的锁绕过互斥）
+        assert reg.get(0) is l0
+        assert l0.locked()
+        assert len(reg._locks) <= 2
 
 
 def test_fmt_comic_header():

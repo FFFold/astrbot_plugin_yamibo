@@ -8,6 +8,7 @@ from yamibo.parser import (
     parse_forum_threads,
     parse_hot_homepage,
     parse_my_records,
+    parse_notice_count,
     parse_ranklist,
     parse_search_results,
     parse_sign_status,
@@ -70,6 +71,16 @@ def test_extract_formhash():
 
 def test_extract_formhash_missing():
     assert extract_formhash("<html></html>") is None
+
+
+def test_parse_notice_count():
+    assert parse_notice_count("未读提醒 <span>3</span>") == 3
+    assert parse_notice_count('class="ntc_l">5</a>') == 5
+    assert parse_notice_count("未读提醒 12 个") == 12
+    # 两处同时存在时优先文案匹配
+    assert parse_notice_count("未读提醒 2 个 <a class=\"ntc_l\">9</a>") == 2
+    assert parse_notice_count("<html><body>no notice</body></html>") is None
+    assert parse_notice_count("") is None
 
 
 def test_parse_sign_status_unsigned():

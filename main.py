@@ -17,12 +17,14 @@ from yamibo.packager import Packager, build_forward_chunks, ensure_safe_filename
 from yamibo.parser import (
     parse_forum_threads,
     parse_my_records,
+    parse_notice_count,
     parse_search_results,
     parse_thread,
 )
 from yamibo.scheduler import Scheduler
 from yamibo.subscriber import Subscriber
 from yamibo.utils import (
+    AsyncLockRegistry,
     build_push_chain,
     cfg_get,
     clamp_int,
@@ -72,8 +74,9 @@ class AstrBotPlugin(Star):
         self.scheduler: Scheduler | None = None
         self.packager: Packager | None = None
         self._cool: dict = {}
-        self._tid_locks: dict[int, asyncio.Lock] = {}
+        self._tid_locks = AsyncLockRegistry()
         self._startup_task = asyncio.create_task(self._init_async())
+        self._startup_task.add_done_callback(self._on_startup_done)
 
     # ---- 初始化 ----
     async def _init_async(self) -> None:
@@ -109,7 +112,24 @@ class AstrBotPlugin(Star):
             self.scheduler.start()
             logger.info("yamibo: 初始化完成")
         except Exception as e:
-            logger.error(f"yamibo: 初始化失败: {e}")
+            # 失败时置空运行态，指令层统一提示「插件未初始化」，避免半初始化状态崩溃
+            logger.error(f"yamibo: 初始化失败: {e}", exc_info=True)
+            if self.client is not None:
+                try:
+                    await self.client.close()
+                except Exception:
+                    pass
+                self.client = None
+            self.scheduler = None
+            self.packager = None
+
+    def _on_startup_done(self, task: asyncio.Task) -> None:
+        """初始化任务兜底观测：异常/取消不再无声无息（asyncio 层面可诊断）。"""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(f"yamibo: 初始化任务异常: {exc!r}")
 
     async def _push(self, umo: str, text: str, images: list[str] | None = None) -> None:
         """推送文本 + 图片（订阅/热帖共用）。发送失败向上抛，由调度层决定游标语义。"""
@@ -173,9 +193,11 @@ class AstrBotPlugin(Star):
             return
         try:
             html = await self.client.get_text("/home.php?mod=space&do=notice")
-            m = re.search(r"未读提醒[^0-9]*(\d+)", html) or re.search(r'class="ntc_l"[^>]*>(\d+)', html)
-            count = m.group(1) if m else "?"
-            yield event.plain_result(f"未读提醒：{count}（详情请访问 https://bbs.yamibo.com/home.php?mod=space&do=notice）")
+            count = parse_notice_count(html)
+            suffix = "（详情请访问 https://bbs.yamibo.com/home.php?mod=space&do=notice）"
+            yield event.plain_result(
+                f"未读提醒：{count}{suffix}" if count is not None else f"未读提醒：?{suffix}"
+            )
         except Exception as e:
             logger.error(f"yamibo notices error: {e}")
             yield event.plain_result(f"查询失败: {e}")
@@ -339,7 +361,7 @@ class AstrBotPlugin(Star):
         ):
             yield event.plain_result("漫画命令冷却中，请稍后再试。")
             return
-        lock = self._tid_locks.setdefault(tid_num, asyncio.Lock())
+        lock = self._tid_locks.get(tid_num)
         async with lock:
             try:
                 yield event.plain_result("正在解析帖子并下载图片，请稍候…")

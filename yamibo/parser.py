@@ -9,6 +9,8 @@ TID_RE = re.compile(r"thread-(\d+)-")
 UID_RE = re.compile(r"space-uid-(\d+)\.html")
 FORMHASH_RE = re.compile(r"formhash=([a-f0-9]{8})")
 RANK_CACHE_NEXT_RE = re.compile(r"下次将于\s*(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
+NOTICE_TEXT_RE = re.compile(r"未读提醒[^0-9]*(\d+)")
+NOTICE_CLS_RE = re.compile(r'class="ntc_l"[^>]*>(\d+)')
 TZ = timezone(timedelta(hours=8))  # 东八区固定偏移（中国无夏令时，避免依赖 tzdata 包）；scheduler 复用此常量
 
 BBS_ORIGIN = "https://bbs.yamibo.com"
@@ -38,6 +40,15 @@ def _clean_padding(text: str) -> str:
 def extract_formhash(html: str) -> str | None:
     m = FORMHASH_RE.search(html)
     return m.group(1) if m else None
+
+
+def parse_notice_count(html: str) -> int | None:
+    """未读提醒数量：优先「未读提醒 N」文案，其次 class=ntc_l 徽标；均未匹配返回 None。"""
+    for pattern in (NOTICE_TEXT_RE, NOTICE_CLS_RE):
+        m = pattern.search(html or "")
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def parse_sign_status(html: str) -> SignStatus:
