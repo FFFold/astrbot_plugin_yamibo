@@ -53,6 +53,8 @@ def build_forward_chains(
     if comp is None:
         import astrbot.api.message_components as comp
 
+    if not files:
+        return []
     chunks = build_forward_chunks(files, reserve=1)
     title_clean = (title or "").strip()
     sender_name = f"百合会-{title_clean[:20]}" if title_clean else f"百合会-{tid_num}"
@@ -86,6 +88,8 @@ def build_file_chain(
     if comp is None:
         import astrbot.api.message_components as comp
 
+    if not files:
+        return [], False
     ext = "zip" if kind == "zip" else "pdf"
     out = files[0].parent / f"{ensure_safe_filename(title or str(tid_num))}.{ext}"
     if kind == "zip":

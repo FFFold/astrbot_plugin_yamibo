@@ -181,12 +181,13 @@ class AsyncLockRegistry:
     def get(self, key) -> asyncio.Lock:
         lock = self._locks.get(key)
         if lock is None:
+            if len(self._locks) >= self._max:
+                # 超限时先淘汰一个未持有的锁（全部持有中则暂时允许扩容，
+                # 绝不能淘汰刚创建的锁——否则同一 key 会拿到不同锁对象绕过互斥）
+                for k, v in list(self._locks.items()):
+                    if not v.locked():
+                        del self._locks[k]
+                        break
             lock = asyncio.Lock()
             self._locks[key] = lock
-        if len(self._locks) > self._max:
-            for k, v in list(self._locks.items()):
-                if not v.locked():
-                    del self._locks[k]
-                if len(self._locks) <= self._max:
-                    break
         return lock

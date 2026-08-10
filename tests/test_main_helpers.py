@@ -121,8 +121,10 @@ def test_truncate():
 
 
 def test_fmt_time():
-    assert fmt_time("2026-8-7 18:21") == "08-07"
-    assert fmt_time("2020-5-11 18:00") == "2020-05-11"
+    cur = datetime.now(TZ).strftime("%Y")
+    assert fmt_time("2026-8-7 18:21") == ("08-07" if cur == "2026" else "2026-08-07")
+    prev = str(int(cur) - 1)
+    assert fmt_time(f"{prev}-5-11 18:00") == f"{prev}-05-11"
     assert fmt_time("") == ""
 
 
@@ -159,6 +161,18 @@ async def test_lock_registry_keeps_held_lock():
         assert reg.get(0) is l0
         assert l0.locked()
         assert len(reg._locks) <= 2
+
+
+async def test_lock_registry_new_key_never_orphaned():
+    """容量满且全部锁被持有时，新 key 的锁不能被淘汰成孤儿（否则并发拿不到同一把锁）。"""
+    reg = AsyncLockRegistry(max_size=2)
+    l0, l1 = reg.get(0), reg.get(1)
+    async with l0, l1:
+        l2a = reg.get(2)
+        l2b = reg.get(2)
+        assert l2a is l2b  # 同一 key 必须始终返回同一把锁
+        assert reg._locks[2] is l2a
+        assert len(reg._locks) == 3  # 全部持有中时允许临时超出容量
 
 
 def test_fmt_comic_header():
