@@ -162,6 +162,12 @@
         "type": "int",
         "default": 4
       },
+      "cleanup_delay_min": {
+        "description": "临时文件延迟清理（分钟）",
+        "hint": "发送后延迟该时长再清理下载目录，给协议端留出异步读取文件的时间；最小 1 分钟",
+        "type": "int",
+        "default": 10
+      },
       "workdir": {
         "description": "临时文件目录（可选）",
         "hint": "容器部署 AstrBot 与协议端时，填两者共享的目录（如 /data/shared/yamibo），协议端才能读取生成的 PDF 文件；留空使用默认目录 data/plugin_data/astrbot_plugin_yamibo",

@@ -3,6 +3,7 @@
 import asyncio
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -353,32 +354,36 @@ class AstrBotPlugin(Star):
                     return
                 urls = urls[: int(cfg_get(self.config, "comic.max_pages", 300))]
                 yield event.plain_result(f"共 {len(urls)} 张图片，开始下载…")
-                files = await self.packager.download_images(
+                res = await self.packager.download_images(
                     urls, f"comic_{tid_num}", referer=f"https://bbs.yamibo.com/thread-{tid_num}-1-1.html"
                 )
-                if not files:
+                if not res.files:
                     yield event.plain_result("图片下载失败")
                     return
+                if res.failed:
+                    yield event.plain_result(
+                        f"{res.failed} 张图片下载失败，继续打包剩余 {len(res.files)} 张…"
+                    )
                 deliver = mode or str(cfg_get(self.config, "comic.deliver_mode", "auto"))
                 is_aiocq = event.get_platform_name() == "aiocqhttp"
                 try:
                     if deliver == "fwd" or (deliver == "auto" and is_aiocq):
                         self_id = getattr(event, "get_self_id", lambda: 10000)() or 10000
-                        chains = await self._build_forward_chains(files, tid_num, tc.title, self_id)
+                        chains = await self._build_forward_chains(res.files, tid_num, tc.title, self_id)
                         for i, nodes in enumerate(chains):
                             yield event.chain_result(nodes)
                             if i < len(chains) - 1:
                                 await asyncio.sleep(2)
                     else:
-                        out, over_size = self._build_pdf(files, tid_num, tc.title)
+                        out, over_size = self._build_pdf(res.files, tid_num, tc.title)
                         if over_size:
-                            for f in files[:20]:
+                            for f in res.files[:20]:
                                 yield event.image_result(str(f))
                             yield event.plain_result("PDF 超过大小限制，已改为发送前 20 张图片")
                         else:
                             yield event.chain_result(out)
                 finally:
-                    self.packager.cleanup(files[0].parent)
+                    self._schedule_cleanup(res.files[0].parent)
             except Exception as e:
                 logger.error(f"yamibo comic error: {e}")
                 yield event.plain_result(f"打包失败: {e}")
@@ -421,6 +426,18 @@ class AstrBotPlugin(Star):
                 )
             chains.append([Comp.Nodes(nodes=nodes)])
         return chains
+
+    def _schedule_cleanup(self, directory: Path) -> None:
+        """发送后延迟清理下载目录。
+
+        协议端可能异步读取文件（PDF/转发图片），立即删除会导致发送失败；
+        记录快照时间点，只删除该时间点前的文件，避免误删并发/重启后的新下载。
+        """
+        cutoff = time.time()
+        delay = max(30, int(cfg_get(self.config, "comic.cleanup_delay_min", 10))) * 60
+        asyncio.get_running_loop().call_later(
+            delay, lambda: Packager.cleanup_older_than(directory, cutoff)
+        )
 
     # ---- 指令：订阅 ----
     @yamibo.command("订阅")

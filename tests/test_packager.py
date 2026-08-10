@@ -1,4 +1,6 @@
+import os
 import struct
+import time
 import zipfile
 from pathlib import Path
 
@@ -10,6 +12,41 @@ from yamibo.packager import (
 )
 
 FAKE_PATHS = [Path(f"p{i}.jpg") for i in range(250)]
+
+IMG_URL = "https://bbs.yamibo.com/data/attachment/forum/202608/09/a.jpg"
+
+
+class FakeResp:
+    def __init__(self, status: int = 200, data: bytes = b"", exc: Exception | None = None):
+        self.status = status
+        self._data = data
+        self._exc = exc
+
+    async def __aenter__(self):
+        if self._exc is not None:
+            raise self._exc
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+    async def read(self) -> bytes:
+        return self._data
+
+
+class FakeSession:
+    """每 URL 一个响应队列，按调用顺序弹出。"""
+
+    def __init__(self, mapping: dict | None = None):
+        self._mapping = mapping or {}
+        self.attempts: list[str] = []
+
+    def get(self, url: str, **kwargs):
+        self.attempts.append(url)
+        queue = self._mapping.get(url)
+        if not queue:
+            return FakeResp(exc=RuntimeError(f"no route for {url}"))
+        return queue.pop(0)
 
 
 def test_chunk_list():
@@ -83,4 +120,85 @@ def test_cleanup(tmp_path):
     d.mkdir()
     (d / "x.jpg").write_bytes(b"x")
     Packager.cleanup(d)
+    assert not d.exists()
+
+
+# ---- 下载：失败统计 / 重试 / 原子写 ----
+
+async def test_download_success_no_tmp_left(tmp_path):
+    sess = FakeSession({IMG_URL: [FakeResp(data=b"img-a")]})
+    p = Packager(sess, workdir=tmp_path, concurrency=2)
+    res = await p.download_images([IMG_URL], "c1")
+    assert res.total == 1
+    assert res.failed == 0
+    assert len(res.files) == 1
+    assert res.files[0].read_bytes() == b"img-a"
+    assert not list((tmp_path / "c1").glob("*.tmp"))
+
+
+async def test_download_failure_counted(tmp_path):
+    bad = "https://bbs.yamibo.com/bad.jpg"
+    sess = FakeSession({bad: [FakeResp(exc=RuntimeError("boom")), FakeResp(exc=RuntimeError("boom"))]})
+    p = Packager(sess, workdir=tmp_path)
+    res = await p.download_images([bad], "c2")
+    assert res.failed == 1
+    assert res.files == []
+
+
+async def test_download_retries_once_on_exception(tmp_path):
+    url = "https://bbs.yamibo.com/flaky.jpg"
+    sess = FakeSession({url: [FakeResp(exc=RuntimeError("net")), FakeResp(data=b"retried")]})
+    p = Packager(sess, workdir=tmp_path)
+    res = await p.download_images([url], "c3")
+    assert res.failed == 0
+    assert res.files[0].read_bytes() == b"retried"
+    assert len(sess.attempts) == 2
+
+
+async def test_download_http_error_not_retried(tmp_path):
+    url = "https://bbs.yamibo.com/404.jpg"
+    sess = FakeSession({url: [FakeResp(status=404), FakeResp(data=b"x")]})
+    p = Packager(sess, workdir=tmp_path)
+    res = await p.download_images([url], "c4")
+    assert res.failed == 1
+    assert len(sess.attempts) == 1
+
+
+async def test_download_reuses_complete_file(tmp_path):
+    sess = FakeSession({IMG_URL: [FakeResp(data=b"img-a")]})
+    p = Packager(sess, workdir=tmp_path, concurrency=2)
+    await p.download_images([IMG_URL], "c5")
+    # 远端不可用时，已完成的本地文件直接复用、不重新请求
+    p2 = Packager(FakeSession({}), workdir=tmp_path, concurrency=2)
+    res = await p2.download_images([IMG_URL], "c5")
+    assert res.failed == 0
+    assert len(res.files) == 1
+
+
+async def test_download_empty_input(tmp_path):
+    p = Packager(FakeSession({}), workdir=tmp_path)
+    res = await p.download_images([], "c6")
+    assert res.total == 0
+    assert res.failed == 0
+    assert res.files == []
+
+
+def test_cleanup_older_than_keeps_new_files(tmp_path):
+    d = tmp_path / "dl"
+    d.mkdir()
+    old = d / "old.jpg"
+    old.write_bytes(b"x")
+    os.utime(old, (time.time() - 100, time.time() - 100))
+    # 快照取当前时间并留 100ms 余量，规避 Windows mtime 量化导致的时间竞态
+    cutoff = time.time() - 0.1
+    time.sleep(0.02)
+    # 快照之后写入的文件不应被删除
+    new = d / "new.jpg"
+    new.write_bytes(b"y")
+    Packager.cleanup_older_than(d, cutoff)
+    assert not old.exists()
+    assert new.exists()
+    assert d.exists()  # 目录非空时保留
+    os.utime(new, (time.time() - 100, time.time() - 100))
+    Packager.cleanup_older_than(d, cutoff)
     assert not d.exists()

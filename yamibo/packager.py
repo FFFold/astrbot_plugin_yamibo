@@ -1,14 +1,25 @@
 """图片下载与打包：PDF 合并、合并转发节点分批、ZIP。"""
 
 import asyncio
+import os
 import re
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import img2pdf
 
 FORWARD_CHUNK = 100
 SAFE_NAME_RE = re.compile(r'[\\/:*?"<>|]')
+
+
+@dataclass
+class DownloadResult:
+    """图片下载结果：files 为成功文件（按输入顺序），failed 为失败张数。"""
+
+    files: list[Path] = field(default_factory=list)
+    total: int = 0
+    failed: int = 0
 
 
 def ensure_safe_filename(name: str) -> str:
@@ -38,10 +49,14 @@ class Packager:
 
     async def download_images(
         self, urls: list[str], prefix: str, *, referer: str = ""
-    ) -> list[Path]:
-        """并发下载图片到 workdir/prefix/，返回文件路径列表（按输入顺序）。"""
+    ) -> DownloadResult:
+        """并发下载图片到 workdir/prefix/，返回 DownloadResult。
+
+        单张失败重试 1 次（仅网络异常，非 200 不重试）；先写 .tmp 再原子 rename，
+        崩溃残留的半截文件不会以正式文件名出现，也不会被复用。
+        """
         if not urls:
-            return []
+            return DownloadResult(total=0)
         out_dir = self._workdir / ensure_safe_filename(prefix)
         out_dir.mkdir(parents=True, exist_ok=True)
         sem = asyncio.Semaphore(self._concurrency)
@@ -52,19 +67,25 @@ class Packager:
             if dest.exists() and dest.stat().st_size > 0:
                 return dest
             headers = {"Referer": referer} if referer else {}
-            async with sem:
-                try:
-                    async with self._session.get(url, headers=headers, timeout=30) as resp:
-                        if resp.status != 200:
-                            return None
-                        data = await resp.read()
-                    dest.write_bytes(data)
-                    return dest
-                except Exception:
-                    return None
+            tmp = out_dir / f"{index:04d}{ext}.tmp"
+            for _ in range(2):  # 网络异常重试 1 次
+                async with sem:
+                    try:
+                        async with self._session.get(url, headers=headers, timeout=30) as resp:
+                            if resp.status != 200:
+                                return None
+                            data = await resp.read()
+                        tmp.write_bytes(data)
+                        os.replace(tmp, dest)
+                        return dest
+                    except Exception:
+                        tmp.unlink(missing_ok=True)
+                        continue
+            return None
 
         results = await asyncio.gather(*(one(i, u) for i, u in enumerate(urls)))
-        return [r for r in results if r is not None]
+        files = [r for r in results if r is not None]
+        return DownloadResult(files=files, total=len(urls), failed=len(urls) - len(files))
 
     @staticmethod
     def build_pdf(files: list[Path], out: Path) -> Path:
@@ -93,3 +114,20 @@ class Packager:
                     p.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    @staticmethod
+    def cleanup_older_than(directory: Path, cutoff: float) -> None:
+        """删除目录中 mtime <= cutoff 的文件（含 .tmp 残留），清空后移除目录。
+
+        用于发送后的延迟清理：只删快照时间点前的文件，避免误删并发/重启后新下载的文件。
+        """
+        try:
+            for p in directory.iterdir():
+                try:
+                    if p.is_file() and p.stat().st_mtime <= cutoff:
+                        p.unlink(missing_ok=True)
+                except OSError:
+                    continue
+            directory.rmdir()
+        except OSError:
+            pass
