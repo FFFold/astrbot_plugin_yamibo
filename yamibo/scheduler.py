@@ -65,7 +65,7 @@ class Scheduler:
         self._clock: Callable[[], float] = time.monotonic
         self._hot_incr_state: IncrState | None = None
         self._hot_daily_date: str | None = None
-        self._auth_fail_notified_at = 0.0  # 上次 cookie 失效告警时间（monotonic），用于去重
+        self._auth_fail_notified_at: float | None = None  # 上次 cookie 失效告警时间（monotonic），None=从未告警
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         self._running = False
@@ -285,11 +285,14 @@ class Scheduler:
         return delivered
 
     async def _notify_auth_fail(self) -> None:
-        """cookie 失效告警（1 小时内去重，避免多循环各自触发轰炸）。"""
+        """cookie 失效告警（1 小时内去重，避免多循环各自触发轰炸）。
+
+        初始为 None（从未告警）：首次告警不因 monotonic 起始值小而被窗口吞掉。
+        """
         if not self._cfg_get("limits.notify_auth_fail", False):
             return
         now = time.monotonic()
-        if now - self._auth_fail_notified_at < 3600:
+        if self._auth_fail_notified_at is not None and now - self._auth_fail_notified_at < 3600:
             return
         self._auth_fail_notified_at = now
         await self._push_to_targets("【百合会助手】cookie 已失效，请管理员在插件配置中更新 auth/saltkey")

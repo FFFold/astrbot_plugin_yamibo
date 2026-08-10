@@ -417,6 +417,22 @@ async def test_auth_fail_notify_deduped(make_sched):
     assert "cookie" in rec.sent[0][1]
 
 
+async def test_auth_fail_notify_not_suppressed_on_fresh_start(make_sched, monkeypatch):
+    """服务刚启动（monotonic 尚小）时首次 cookie 失效也应告警，不能被 3600s 去重窗口吞掉。"""
+    import yamibo.scheduler as sched_mod
+
+    s, client, sub, rec = make_sched(**{"limits.notify_auth_fail": True})
+    fake_clock = {"now": 5.0}
+    monkeypatch.setattr(sched_mod.time, "monotonic", lambda: fake_clock["now"])
+    await s._notify_auth_fail()
+    assert len(rec.sent) == 1  # 首次告警不被去重
+    await s._notify_auth_fail()
+    assert len(rec.sent) == 1  # 窗口内去重
+    fake_clock["now"] += 3601
+    await s._notify_auth_fail()
+    assert len(rec.sent) == 2  # 窗口过后再次告警
+
+
 async def test_auth_fail_notify_disabled(make_sched):
     s, client, sub, rec = make_sched(**{"limits.notify_auth_fail": False})
     await s._notify_auth_fail()

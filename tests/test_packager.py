@@ -238,7 +238,9 @@ async def test_download_http_error_not_retried(tmp_path):
     p = Packager(sess, workdir=tmp_path)
     res = await p.download_images([url], "c4")
     assert res.failed == 1
-    assert len(sess.attempts) == 1
+    assert res.files == []  # HTTP 错误不产生输出文件
+    assert not list((tmp_path / "c4").glob("*.tmp"))  # 也不残留临时文件
+    assert len(sess.attempts) == 1  # 非 200 不重试
 
 
 async def test_download_reuses_complete_file(tmp_path):
