@@ -434,7 +434,7 @@ class AstrBotPlugin(Star):
         记录快照时间点，只删除该时间点前的文件，避免误删并发/重启后的新下载。
         """
         cutoff = time.time()
-        delay = max(30, int(cfg_get(self.config, "comic.cleanup_delay_min", 10))) * 60
+        delay = max(1, int(cfg_get(self.config, "comic.cleanup_delay_min", 10))) * 60
         asyncio.get_running_loop().call_later(
             delay, lambda: Packager.cleanup_older_than(directory, cutoff)
         )
