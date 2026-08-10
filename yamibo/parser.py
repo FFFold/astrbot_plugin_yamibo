@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from bs4 import BeautifulSoup
 
-from yamibo.models import HotItem, PostFloor, SignStatus, ThreadContent, ThreadSummary
+from yamibo.models import HotItem, PostFloor, SignRecords, SignStatus, ThreadContent, ThreadSummary
 
 TID_RE = re.compile(r"thread-(\d+)-")
 UID_RE = re.compile(r"space-uid-(\d+)\.html")
@@ -77,21 +77,6 @@ def _tid_from_href(href: str) -> int | None:
 def _uid_from_href(href: str) -> int | None:
     m = UID_RE.search(href or "")
     return int(m.group(1)) if m else None
-
-
-def parse_hot_homepage(html: str) -> list[HotItem]:
-    soup = BeautifulSoup(html, "html.parser")
-    block = soup.select_one("#portal_block_52_content")
-    items: list[HotItem] = []
-    if not block:
-        return items
-    for li in block.select("ul li"):
-        a = li.select_one("a")
-        em = li.select_one("em")
-        tid = _tid_from_href(a.get("href")) if a else None
-        if tid:
-            items.append(HotItem(tid=tid, title=a.get_text(strip=True), date=em.get_text(strip=True) if em else ""))
-    return items
 
 
 def parse_ranklist(html: str) -> list[HotItem]:
@@ -251,15 +236,15 @@ def parse_search_results(html: str) -> list[ThreadSummary]:
     return items
 
 
-def parse_my_records(html: str) -> dict:
+def parse_my_records(html: str) -> SignRecords:
     soup = BeautifulSoup(html, "html.parser")
     table = soup.select_one("table.dt.mtm")
     rows = table.find_all("tr") if table else []
-    result = {"count": 0, "last_time": "", "last_reward": ""}
+    result = SignRecords()
     if len(rows) > 1:
         cells = rows[1].find_all("td")
         if cells:
-            result["count"] = max(0, len(rows) - 1)
-            result["last_time"] = cells[0].get_text(strip=True)
-            result["last_reward"] = cells[1].get_text(strip=True)
+            result.count = max(0, len(rows) - 1)
+            result.last_time = cells[0].get_text(strip=True)
+            result.last_reward = cells[1].get_text(strip=True)
     return result

@@ -6,7 +6,6 @@ from yamibo.parser import (
     extract_formhash,
     extract_rank_cache_next,
     parse_forum_threads,
-    parse_hot_homepage,
     parse_my_records,
     parse_notice_count,
     parse_ranklist,
@@ -26,13 +25,6 @@ SIGN_SIGNED = """
 <table class="dt mtm"><tbody><tr><th>用户名</th><th>打卡等级</th><th>总天数</th><th>月天数</th><th>上次打卡时间</th><th>上次奖励</th><th>总奖励</th><th>今日状态</th></tr>
 <tr><td><a href="space-uid-621168.html" target="_blank">fold1486</a></td><td>百合化神</td><td>193</td><td>5</td><td>2026-08-07 21:46:04</td><td>1对象</td><td>269对象</td><td><font color="green">今日已打卡</font></td></tr>
 </tbody></table>
-"""
-
-HOT_HOMEPAGE = """
-<div id="portal_block_52_content"><div class="module cl xl xl1">
-<ul><li><em>2026-08-06</em><a href="thread-574663-1-1.html" title="大家能接受百合cp中出现霸凌情节吗">大家能接受百合cp中出现霸凌情节吗</a></li>
-<li><em>2026-08-07</em><a href="thread-574670-1-1.html" title="好难受">好难受</a></li></ul>
-</div></div>
 """
 
 RANKLIST = """
@@ -101,13 +93,6 @@ def test_parse_sign_status_unsigned_with_other_users_rows():
 def test_parse_sign_status_signed():
     st = parse_sign_status(SIGN_SIGNED)
     assert st.signed_today is True
-
-
-def test_parse_hot_homepage():
-    items = parse_hot_homepage(HOT_HOMEPAGE)
-    assert len(items) == 2
-    assert items[0].tid == 574663
-    assert items[0].date == "2026-08-06"
 
 
 def test_parse_ranklist():
@@ -329,6 +314,6 @@ def test_parse_thread_empty_floor_number():
 
 def test_parse_my_records():
     rec = parse_my_records(MY_RECORDS)
-    assert rec["last_time"] == "2026-08-07 21:46:04"
-    assert rec["last_reward"] == "1对象"
-    assert rec["count"] == 2
+    assert rec.last_time == "2026-08-07 21:46:04"
+    assert rec.last_reward == "1对象"
+    assert rec.count == 2

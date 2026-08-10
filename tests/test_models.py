@@ -16,7 +16,7 @@ def test_post_floor_floor_ordering():
 def test_subscription_defaults():
     s = Subscription(
         id="s1", tid=574233, title="t", op_uid=1, op_name="op", last_floor=0, last_pid=0,
-        only_op=True, subscribers=["umo1"], created_at=0,
+        subscribers=["umo1"], created_at=0,
     )
     assert s.paused is False
     assert s.fail_count == 0
@@ -25,4 +25,3 @@ def test_subscription_defaults():
 def test_sign_status():
     s = SignStatus(signed_today=True)
     assert s.signed_today
-    assert s.total_days == 0

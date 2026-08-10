@@ -4,6 +4,8 @@ from pathlib import Path
 from yamibo.models import HotItem, ThreadSummary
 from yamibo.parser import TZ
 from yamibo.utils import (
+    FORUM_ALIASES,
+    FORUM_NAMES,
     AsyncLockRegistry,
     build_push_chain,
     cfg_get,
@@ -12,8 +14,10 @@ from yamibo.utils import (
     fmt_comic_header,
     fmt_list,
     fmt_time,
+    normalize_deliver_mode,
     parse_tid_input,
     resolve_comic_workdir,
+    resolve_fid,
     truncate,
 )
 
@@ -38,6 +42,30 @@ def test_parse_tid_input():
     assert parse_tid_input("forum.php?mod=viewthread&tid=574233") == 574233
     assert parse_tid_input("https://evil.com/thread-1-1.html") is None
     assert parse_tid_input("abc") is None
+
+
+def test_resolve_fid():
+    assert FORUM_NAMES["13"] == "貼圖區"
+    assert FORUM_ALIASES["动漫区"] == "5"
+    assert resolve_fid("13") == "13"
+    assert resolve_fid("999") is None  # 数字但不在已知版块
+    assert resolve_fid("贴图区") == "13"
+    assert resolve_fid("貼圖區") == "13"
+    assert resolve_fid("動漫區") == "5"
+    assert resolve_fid(" 动漫 ") == "5"
+    assert resolve_fid("") is None
+    assert resolve_fid("未知") is None
+
+
+def test_normalize_deliver_mode():
+    assert normalize_deliver_mode("fwd") == "fwd"
+    assert normalize_deliver_mode("merge_forward") == "fwd"  # 旧配置值兼容
+    assert normalize_deliver_mode("FORWARD") == "fwd"
+    assert normalize_deliver_mode("pdf") == "pdf"
+    assert normalize_deliver_mode("auto") == "auto"
+    assert normalize_deliver_mode("zip") == "zip"
+    assert normalize_deliver_mode("") == ""
+    assert normalize_deliver_mode(None) == ""
 
 
 def test_cooldown_ok():

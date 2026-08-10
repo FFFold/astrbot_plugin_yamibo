@@ -66,7 +66,6 @@ class Subscriber:
             id=d.get("id", ""), tid=int(d.get("tid", 0)), title=d.get("title", ""),
             op_uid=int(d.get("op_uid", 0)), op_name=d.get("op_name", ""),
             last_floor=int(d.get("last_floor", 0)), last_pid=int(d.get("last_pid", 0)),
-            only_op=bool(d.get("only_op", True)),
             subscribers=list(d.get("subscribers", [])),
             created_at=int(d.get("created_at", 0)),
             paused=bool(d.get("paused", False)),
@@ -78,7 +77,7 @@ class Subscriber:
         return {
             "id": s.id, "tid": s.tid, "title": s.title, "op_uid": s.op_uid,
             "op_name": s.op_name, "last_floor": s.last_floor, "last_pid": s.last_pid,
-            "only_op": s.only_op, "subscribers": list(s.subscribers),
+            "subscribers": list(s.subscribers),
             "created_at": s.created_at, "paused": s.paused, "fail_count": s.fail_count,
         }
 
@@ -94,7 +93,7 @@ class Subscriber:
                 return None
         s = Subscription(
             id=uuid.uuid4().hex[:12], tid=tid, title=title, op_uid=op_uid, op_name=op_name,
-            last_floor=0, last_pid=0, only_op=True, subscribers=[umo],
+            last_floor=0, last_pid=0, subscribers=[umo],
             created_at=int(time.time()),
         )
         items.append(self._to_dict(s))

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import img2pdf
 
+from yamibo.utils import fmt_comic_header
+
 FORWARD_CHUNK = 100
 SAFE_NAME_RE = re.compile(r'[\\/:*?"<>|]')
 
@@ -37,6 +39,62 @@ def build_forward_chunks(files: list[Path], *, reserve: int = 0) -> list[list[Pa
         return []
     first, rest = files[: FORWARD_CHUNK - reserve], files[FORWARD_CHUNK - reserve :]
     return [first] + chunk_list(rest, FORWARD_CHUNK)
+
+
+def build_forward_chains(
+    files: list[Path], tid_num: int, title: str, self_id: int, *, comp=None
+) -> list[list]:
+    """生成合并转发节点批次（每批 100 节点，首条为标题 + 原帖链接）。
+
+    每条 chain 必须是单个 Comp.Nodes（内含全部节点），aiocqhttp 适配器对
+    chain 中的每个 Node/Nodes 段分别发送一次转发。
+    comp 为 astrbot message_components 模块（可注入测试桩，缺省惰性导入）。
+    """
+    if comp is None:
+        import astrbot.api.message_components as comp
+
+    chunks = build_forward_chunks(files, reserve=1)
+    title_clean = (title or "").strip()
+    sender_name = f"百合会-{title_clean[:20]}" if title_clean else f"百合会-{tid_num}"
+    chains: list[list] = []
+    for i, chunk in enumerate(chunks):
+        nodes = [
+            comp.Node(uin=self_id, name=sender_name, content=[comp.Image.fromFileSystem(str(f))])
+            for f in chunk
+        ]
+        if i == 0:
+            nodes.insert(
+                0,
+                comp.Node(
+                    uin=self_id,
+                    name=sender_name,
+                    content=[comp.Plain(fmt_comic_header(title, tid_num))],
+                ),
+            )
+        chains.append([comp.Nodes(nodes=nodes)])
+    return chains
+
+
+def build_file_chain(
+    files: list[Path], tid_num: int, title: str, kind: str, max_bytes: int, *, comp=None
+) -> tuple[list, bool]:
+    """生成 PDF/ZIP 文件消息链。kind: "pdf" | "zip"。
+
+    返回 (chain 组件列表, 是否超限)。max_bytes <= 0 表示不限制。
+    comp 为 astrbot message_components 模块（可注入测试桩，缺省惰性导入）。
+    """
+    if comp is None:
+        import astrbot.api.message_components as comp
+
+    ext = "zip" if kind == "zip" else "pdf"
+    out = files[0].parent / f"{ensure_safe_filename(title or str(tid_num))}.{ext}"
+    if kind == "zip":
+        Packager.build_zip(files, out)
+    else:
+        Packager.build_pdf(files, out)
+    if max_bytes > 0 and out.stat().st_size > max_bytes:
+        return [], True
+    return [comp.File(file=str(out), name=out.name)], False
 
 
 class Packager:

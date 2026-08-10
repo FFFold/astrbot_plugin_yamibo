@@ -12,6 +12,39 @@ TID_URL_RE = re.compile(r"(?:thread-(\d+)-|tid=(\d+))")
 TIME_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
 DEFAULT_LIMIT = 15
 
+# fid -> 显示名；查找支持繁体/简体/常见简称
+FORUM_NAMES: dict[str, str] = {
+    "5": "動漫區", "13": "貼圖區", "33": "海域區", "49": "文學區",
+    "44": "遊戲區", "379": "影視區", "19": "資源交流區", "16": "管理版",
+}
+FORUM_ALIASES: dict[str, str] = {
+    "动漫区": "5", "動漫區": "5", "动漫": "5",
+    "贴图区": "13", "貼圖區": "13", "贴图": "13",
+    "海域区": "33", "海域區": "33", "海域": "33",
+    "文学区": "49", "文學區": "49", "文学": "49",
+    "游戏区": "44", "遊戲區": "44", "游戏": "44",
+    "影视区": "379", "影視區": "379", "影视": "379",
+    "资源交流区": "19", "資源交流區": "19", "资源": "19",
+    "管理版": "16",
+}
+
+# 旧配置值（merge_forward）兼容映射到统一名字 fwd
+_DELIVER_ALIASES = {"merge_forward": "fwd", "forward": "fwd"}
+
+
+def resolve_fid(raw: str) -> str | None:
+    """版块参数解析：数字 fid、繁体/简体名称/简称。无法识别返回 None。"""
+    raw = (raw or "").strip()
+    if raw.isdigit():
+        return raw if raw in FORUM_NAMES else None
+    return FORUM_ALIASES.get(raw)
+
+
+def normalize_deliver_mode(mode: str | None) -> str:
+    """统一漫画发送方式命名：merge_forward/forward 旧值归一为 fwd，其余原样返回。"""
+    m = (mode or "").strip().lower()
+    return _DELIVER_ALIASES.get(m, m)
+
 
 def cfg_get(config: dict, path: str, default: Any = None) -> Any:
     """按点号路径读取嵌套配置，如 cfg_get(config, "login.auth")。"""

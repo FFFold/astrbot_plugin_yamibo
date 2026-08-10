@@ -428,7 +428,7 @@ async def test_auth_fail_notify_disabled(make_sched):
 def _sub(tid: int = 574233, last_floor: int = 3, subscribers=None) -> Subscription:
     return Subscription(
         id="s1", tid=tid, title="T", op_uid=7, op_name="op",
-        last_floor=last_floor, last_pid=5, only_op=True,
+        last_floor=last_floor, last_pid=5,
         subscribers=subscribers or [UMO],
     )
 

@@ -13,7 +13,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 
 from yamibo.client import ForumClient, NotLoggedInError, WafError
-from yamibo.packager import Packager, build_forward_chunks, ensure_safe_filename
+from yamibo.packager import Packager, build_file_chain, build_forward_chains
 from yamibo.parser import (
     parse_forum_threads,
     parse_my_records,
@@ -24,45 +24,23 @@ from yamibo.parser import (
 from yamibo.scheduler import Scheduler
 from yamibo.subscriber import Subscriber
 from yamibo.utils import (
+    FORUM_NAMES,
     AsyncLockRegistry,
     build_push_chain,
     cfg_get,
     clamp_int,
     cooldown_ok,
-    fmt_comic_header,
     fmt_list,
+    normalize_deliver_mode,
     parse_tid_input,
     resolve_comic_workdir,
+    resolve_fid,
 )
-
-# fid -> 显示名；查找支持繁体/简体/常见简称
-FORUM_NAMES: dict[str, str] = {
-    "5": "動漫區", "13": "貼圖區", "33": "海域區", "49": "文學區",
-    "44": "遊戲區", "379": "影視區", "19": "資源交流區", "16": "管理版",
-}
-FORUM_ALIASES: dict[str, str] = {
-    "动漫区": "5", "動漫區": "5", "动漫": "5",
-    "贴图区": "13", "貼圖區": "13", "贴图": "13",
-    "海域区": "33", "海域區": "33", "海域": "33",
-    "文学区": "49", "文學區": "49", "文学": "49",
-    "游戏区": "44", "遊戲區": "44", "游戏": "44",
-    "影视区": "379", "影視區": "379", "影视": "379",
-    "资源交流区": "19", "資源交流區": "19", "资源": "19",
-    "管理版": "16",
-}
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 )
-
-
-def resolve_fid(raw: str) -> str | None:
-    """版块参数解析：数字 fid、繁体/简体名称/简称。无法识别返回 None。"""
-    raw = (raw or "").strip()
-    if raw.isdigit():
-        return raw if raw in FORUM_NAMES else None
-    return FORUM_ALIASES.get(raw)
 
 
 class AstrBotPlugin(Star):
@@ -176,9 +154,9 @@ class AstrBotPlugin(Star):
             records_html = await self.client.get_text("/plugin.php?id=zqlj_sign&tb=my")
             rec = parse_my_records(records_html)
             lines = ["【签到状态】", "今日：" + ("已签到" if status.signed_today else "未签到")]
-            if rec["last_time"]:
-                lines.append(f"最近打卡：{rec['last_time']} 奖励 {rec['last_reward']}")
-                lines.append(f"近 15 条内打卡次数：{rec['count']}")
+            if rec.last_time:
+                lines.append(f"最近打卡：{rec.last_time} 奖励 {rec.last_reward}")
+                lines.append(f"近 15 条内打卡次数：{rec.count}")
             yield event.plain_result("\n".join(lines))
         except Exception as e:
             logger.error(f"yamibo sign status error: {e}")
@@ -347,7 +325,7 @@ class AstrBotPlugin(Star):
 
     @yamibo.command("漫画")
     async def comic(self, event: AstrMessageEvent, tid: str, mode: str = ""):
-        """解析漫画帖并打包发送。mode=pdf|fwd。"""
+        """解析漫画帖并打包发送。mode=pdf|fwd|zip。"""
         if not self.client or not self.packager:
             yield event.plain_result("插件未初始化")
             return
@@ -386,22 +364,26 @@ class AstrBotPlugin(Star):
                     yield event.plain_result(
                         f"{res.failed} 张图片下载失败，继续打包剩余 {len(res.files)} 张…"
                     )
-                deliver = mode or str(cfg_get(self.config, "comic.deliver_mode", "auto"))
+                deliver = normalize_deliver_mode(
+                    mode or str(cfg_get(self.config, "comic.deliver_mode", "auto"))
+                )
                 is_aiocq = event.get_platform_name() == "aiocqhttp"
                 try:
                     if deliver == "fwd" or (deliver == "auto" and is_aiocq):
                         self_id = getattr(event, "get_self_id", lambda: 10000)() or 10000
-                        chains = await self._build_forward_chains(res.files, tid_num, tc.title, self_id)
+                        chains = build_forward_chains(res.files, tid_num, tc.title, self_id)
                         for i, nodes in enumerate(chains):
                             yield event.chain_result(nodes)
                             if i < len(chains) - 1:
                                 await asyncio.sleep(2)
                     else:
-                        out, over_size = self._build_pdf(res.files, tid_num, tc.title)
+                        kind = "zip" if deliver == "zip" else "pdf"
+                        limit = int(cfg_get(self.config, "comic.max_file_size_mb", 45)) * 1024 * 1024
+                        out, over_size = build_file_chain(res.files, tid_num, tc.title, kind, limit)
                         if over_size:
                             for f in res.files[:20]:
                                 yield event.image_result(str(f))
-                            yield event.plain_result("PDF 超过大小限制，已改为发送前 20 张图片")
+                            yield event.plain_result(f"{kind.upper()} 超过大小限制，已改为发送前 20 张图片")
                         else:
                             yield event.chain_result(out)
                 finally:
@@ -409,45 +391,6 @@ class AstrBotPlugin(Star):
             except Exception as e:
                 logger.error(f"yamibo comic error: {e}")
                 yield event.plain_result(f"打包失败: {e}")
-
-    def _build_pdf(self, files, tid_num: int, title: str) -> tuple[list, bool]:
-        """生成 PDF。返回 (chain 组件列表, 是否超限)。"""
-        import astrbot.api.message_components as Comp
-
-        out = files[0].parent / f"{ensure_safe_filename(title or str(tid_num))}.pdf"
-        Packager.build_pdf(files, out)
-        limit = int(cfg_get(self.config, "comic.max_file_size_mb", 45)) * 1024 * 1024
-        if out.stat().st_size > limit:
-            return [], True
-        return [Comp.File(file=str(out), name=out.name)], False
-
-    async def _build_forward_chains(self, files, tid_num: int, title: str, self_id: int) -> list[list]:
-        """生成合并转发节点批次（每批 100 节点）。
-
-        首条节点为标题 + 原帖链接；注意每条 chain 必须是单个 Comp.Nodes（内含全部节点），
-        aiocqhttp 适配器对 chain 中的每个 Node/Nodes 段分别发送一次转发。
-        """
-        import astrbot.api.message_components as Comp
-
-        chunks = build_forward_chunks(files, reserve=1)
-        sender_name = f"百合会-{title[:20]}" if title else f"百合会-{tid_num}"
-        chains: list[list] = []
-        for i, chunk in enumerate(chunks):
-            nodes = [
-                Comp.Node(uin=self_id, name=sender_name, content=[Comp.Image.fromFileSystem(str(f))])
-                for f in chunk
-            ]
-            if i == 0:
-                nodes.insert(
-                    0,
-                    Comp.Node(
-                        uin=self_id,
-                        name=sender_name,
-                        content=[Comp.Plain(fmt_comic_header(title, tid_num))],
-                    ),
-                )
-            chains.append([Comp.Nodes(nodes=nodes)])
-        return chains
 
     def _schedule_cleanup(self, directory: Path) -> None:
         """发送后延迟清理下载目录。
@@ -540,7 +483,7 @@ class AstrBotPlugin(Star):
             "【百合会助手】\n"
             "管理员：/yamibo 签到 | 签到状态 | 提醒 | cookie状态\n"
             "公开：/yamibo 热帖 [N] | 版块 [fid|名称] [hot|new] [页] | 搜索 关键词\n"
-            "      /yamibo 帖子 <tid|链接> | 漫画 <tid|链接> [pdf|fwd]\n"
+            "      /yamibo 帖子 <tid|链接> | 漫画 <tid|链接> [pdf|fwd|zip]\n"
             "      /yamibo 订阅 <tid|链接> | 订阅列表 | 取消订阅 <tid>\n"
             "      /yamibo 订阅热帖 | 取消热帖\n"
             "cookie 获取：DevTools → Application → Cookies → bbs.yamibo.com，\n"

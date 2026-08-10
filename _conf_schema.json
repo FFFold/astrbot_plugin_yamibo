@@ -139,10 +139,10 @@
     "items": {
       "deliver_mode": {
         "description": "发送方式",
-        "hint": "auto：aiocqhttp 平台用 QQ 合并转发（每图一节点），其余平台用 PDF；可强制指定 pdf 或 merge_forward",
+        "hint": "auto：aiocqhttp 平台用 QQ 合并转发（每图一节点），其余平台用 PDF；可强制指定 pdf、fwd（合并转发）或 zip",
         "type": "string",
         "default": "auto",
-        "options": ["auto", "pdf", "merge_forward"]
+        "options": ["auto", "pdf", "fwd", "zip"]
       },
       "max_pages": {
         "description": "最大页数",

@@ -6,6 +6,8 @@ from pathlib import Path
 
 from yamibo.packager import (
     Packager,
+    build_file_chain,
+    build_forward_chains,
     build_forward_chunks,
     chunk_list,
     ensure_safe_filename,
@@ -14,6 +16,31 @@ from yamibo.packager import (
 FAKE_PATHS = [Path(f"p{i}.jpg") for i in range(250)]
 
 IMG_URL = "https://bbs.yamibo.com/data/attachment/forum/202608/09/a.jpg"
+
+
+class _StubComp:
+    """astrbot.api.message_components 的测试桩。"""
+
+    @staticmethod
+    def Node(**kw):
+        return ("node", kw)
+
+    @staticmethod
+    def Nodes(**kw):
+        return ("nodes", kw)
+
+    @staticmethod
+    def Plain(text):
+        return ("plain", text)
+
+    class Image:
+        @classmethod
+        def fromFileSystem(cls, path):
+            return ("img", path)
+
+    @staticmethod
+    def File(**kw):
+        return ("file", kw)
 
 
 class FakeResp:
@@ -58,6 +85,59 @@ def test_build_forward_chunks():
     assert len(chunks) == 3
     assert len(chunks[0]) == 100
     assert len(chunks[2]) == 50
+
+
+def test_build_forward_chains_headers_and_nodes():
+    files = [Path("p0.jpg"), Path("p1.jpg"), Path("p2.jpg")]
+    chains = build_forward_chains(files, 574233, "标题", 10000, comp=_StubComp)
+    assert len(chains) == 1
+    nodes = chains[0][0][1]["nodes"]
+    assert len(nodes) == 4  # 头部 + 3 图
+    assert nodes[0][1]["name"].startswith("百合会-")
+    assert nodes[0][1]["content"] == [
+        ("plain", "【标题】\n原帖：https://bbs.yamibo.com/thread-574233-1-1.html")
+    ]
+    assert nodes[1][1]["content"] == [("img", "p0.jpg")]
+    assert all(n[1]["uin"] == 10000 for n in nodes)
+
+
+def test_build_forward_chains_chunking():
+    chains = build_forward_chains(FAKE_PATHS, 1, "t", 10000, comp=_StubComp)
+    assert len(chains) == 3
+    assert len(chains[0][0][1]["nodes"]) == 100  # 99 图 + 1 头部
+    assert len(chains[1][0][1]["nodes"]) == 100
+    assert len(chains[2][0][1]["nodes"]) == 51
+
+
+def test_build_forward_chains_empty_title_fallback():
+    chains = build_forward_chains([Path("p0.jpg")], 7, "  ", 1, comp=_StubComp)
+    nodes = chains[0][0][1]["nodes"]
+    assert nodes[0][1]["name"].startswith("百合会-7")
+
+
+def test_build_file_chain_pdf(tmp_path):
+    p1 = tmp_path / "a.png"
+    _make_png(p1, (255, 0, 0))
+    out_chain, over = build_file_chain([p1], 574233, "标题", "pdf", 1024 * 1024, comp=_StubComp)
+    assert over is False
+    assert out_chain == [("file", {"file": str(tmp_path / "标题.pdf"), "name": "标题.pdf"})]
+    assert (tmp_path / "标题.pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_build_file_chain_zip(tmp_path):
+    p1 = tmp_path / "a.png"
+    _make_png(p1, (255, 0, 0))
+    out_chain, over = build_file_chain([p1], 574233, "标题", "zip", 1024 * 1024, comp=_StubComp)
+    assert over is False
+    assert zipfile.is_zipfile(tmp_path / "标题.zip")
+
+
+def test_build_file_chain_over_size(tmp_path):
+    p1 = tmp_path / "a.png"
+    _make_png(p1, (255, 0, 0))
+    out_chain, over = build_file_chain([p1], 574233, "标题", "pdf", 1, comp=_StubComp)
+    assert over is True
+    assert out_chain == []
 
 
 def test_build_forward_chunks_reserve():
