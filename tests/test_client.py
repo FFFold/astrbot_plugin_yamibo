@@ -4,7 +4,7 @@ import time
 import pytest
 from aiohttp import web
 
-from yamibo.client import ForumClient, NotLoggedInError, WafError
+from yamibo.client import SOLVE_BACKOFF_SEC, TOKEN_TTL, ForumClient, NotLoggedInError, WafError
 
 CHALLENGE_405 = """<!DOCTYPE html><html><head><script>window.__noxExpire=30;</script>
 <script src="/sd5prgymvjlf4cklsqkz91do2mhorb/static/wb/2.1/nox_20260413.js"></script>
@@ -158,10 +158,20 @@ async def test_solve_failure_backoff(monkeypatch):
         return None
 
     monkeypatch.setattr(client, "_solve", fake_solve)
-    monkeypatch.setattr(client, "_apply_static_cookies", lambda: None)
     assert await client.refresh_token() is False
     assert await client.refresh_token() is False
     assert calls["n"] == 1
+
+
+async def test_backoff_with_stale_token_returns_false(monkeypatch):
+    """退避期内即使持有过期 token，refresh_token 也不该宣称拿到新 token。"""
+    client = ForumClient(auth="a", saltkey="b", user_agent="ua")
+    client._nox_token = "stale"
+    client._token_solved_at = time.monotonic() - TOKEN_TTL - 10
+    client._solve_fail_at = time.monotonic()
+    monkeypatch.setattr(client, "_apply_static_cookies", lambda: None)
+    assert time.monotonic() - client._solve_fail_at < SOLVE_BACKOFF_SEC
+    assert await client.refresh_token() is False
 
 
 async def test_solve_backoff_expires_then_retries(monkeypatch):

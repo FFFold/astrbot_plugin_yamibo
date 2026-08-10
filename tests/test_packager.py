@@ -115,12 +115,8 @@ def test_zip_build(tmp_path):
     assert zipfile.is_zipfile(out)
 
 
-def test_cleanup(tmp_path):
-    d = tmp_path / "dl"
-    d.mkdir()
-    (d / "x.jpg").write_bytes(b"x")
-    Packager.cleanup(d)
-    assert not d.exists()
+def test_cleanup_older_than_missing_dir(tmp_path):
+    Packager.cleanup_older_than(tmp_path / "nope", time.time())  # 目录不存在不抛异常
 
 
 # ---- 下载：失败统计 / 重试 / 原子写 ----
@@ -143,6 +139,7 @@ async def test_download_failure_counted(tmp_path):
     res = await p.download_images([bad], "c2")
     assert res.failed == 1
     assert res.files == []
+    assert not list((tmp_path / "c2").glob("*.tmp"))  # 失败后无 .tmp 残留
 
 
 async def test_download_retries_once_on_exception(tmp_path):

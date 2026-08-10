@@ -103,19 +103,6 @@ class Packager:
         return out
 
     @staticmethod
-    def cleanup(*paths: Path) -> None:
-        for p in paths:
-            try:
-                if p.is_dir():
-                    for child in p.iterdir():
-                        child.unlink(missing_ok=True)
-                    p.rmdir()
-                else:
-                    p.unlink(missing_ok=True)
-            except OSError:
-                pass
-
-    @staticmethod
     def cleanup_older_than(directory: Path, cutoff: float) -> None:
         """删除目录中 mtime <= cutoff 的文件（含 .tmp 残留），清空后移除目录。
 

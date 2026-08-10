@@ -2,7 +2,9 @@ from pathlib import Path
 
 from yamibo.models import HotItem, ThreadSummary
 from yamibo.utils import (
+    build_push_chain,
     cfg_get,
+    clamp_int,
     cooldown_ok,
     fmt_comic_header,
     fmt_list,
@@ -11,6 +13,20 @@ from yamibo.utils import (
     resolve_comic_workdir,
     truncate,
 )
+
+
+class _StubImage:
+    @classmethod
+    def fromURL(cls, url):
+        return ("img", url)
+
+
+class _StubComp:
+    @staticmethod
+    def Plain(text):
+        return ("plain", text)
+
+    Image = _StubImage
 
 
 def test_parse_tid_input():
@@ -39,6 +55,23 @@ def test_cfg_get_nested():
     assert cfg_get(cfg, "limits.skip_hidden_content", True) is True
     assert cfg_get(cfg, "nope.nope", 1) == 1
     assert cfg_get({}, "a.b.c", None) is None
+
+
+def test_clamp_int():
+    assert clamp_int(5, 1, 10, 7) == 5
+    assert clamp_int(0, 1, 10, 7) == 1
+    assert clamp_int(99, 1, 10, 7) == 10
+    assert clamp_int(None, 1, 10, 7) == 7
+    assert clamp_int("abc", 1, 10, 7) == 7
+    assert clamp_int("", 1, 10, 7) == 7
+    assert clamp_int("8", 1, 10, 7) == 8
+
+
+def test_build_push_chain():
+    chain = build_push_chain("正文", ["u1", "u2"], _StubComp)
+    assert chain == [("plain", "正文"), ("img", "u1"), ("img", "u2")]
+    assert build_push_chain("正文", [], _StubComp) == [("plain", "正文")]
+    assert build_push_chain("正文", None, _StubComp) == [("plain", "正文")]
 
 
 def test_resolve_comic_workdir():

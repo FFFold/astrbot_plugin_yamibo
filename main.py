@@ -23,7 +23,9 @@ from yamibo.parser import (
 from yamibo.scheduler import Scheduler
 from yamibo.subscriber import Subscriber
 from yamibo.utils import (
+    build_push_chain,
     cfg_get,
+    clamp_int,
     cooldown_ok,
     fmt_comic_header,
     fmt_list,
@@ -113,9 +115,7 @@ class AstrBotPlugin(Star):
         """推送文本 + 图片（订阅/热帖共用）。发送失败向上抛，由调度层决定游标语义。"""
         import astrbot.api.message_components as Comp
 
-        chain = MessageChain().message(text)
-        for url in images or []:
-            chain.append(Comp.Image.fromURL(url))
+        chain = MessageChain(chain=build_push_chain(text, images, Comp))
         await self.context.send_message(umo, chain)
 
     # ---- 指令：签到（管理员） ----
@@ -434,7 +434,7 @@ class AstrBotPlugin(Star):
         记录快照时间点，只删除该时间点前的文件，避免误删并发/重启后的新下载。
         """
         cutoff = time.time()
-        delay = max(1, int(cfg_get(self.config, "comic.cleanup_delay_min", 10))) * 60
+        delay = clamp_int(cfg_get(self.config, "comic.cleanup_delay_min", 10), 1, 24 * 60, 10) * 60
         asyncio.get_running_loop().call_later(
             delay, lambda: Packager.cleanup_older_than(directory, cutoff)
         )

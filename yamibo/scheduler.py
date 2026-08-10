@@ -10,8 +10,10 @@ from typing import Any
 
 from yamibo.client import NotLoggedInError
 from yamibo.hotpush import IncrState, compute_incremental
+from yamibo.models import PostFloor
 from yamibo.parser import TZ, parse_thread
 from yamibo.subscriber import Subscriber
+from yamibo.utils import clamp_int
 
 RANK_UPDATE_GRACE = 300  # 秒；榜单缓存更新时刻后等 5 分钟再抓，防源站 cron 延迟
 # images 为该楼层的图片 URL 列表（已按 image_max 截断）；发送方负责按平台发送
@@ -101,10 +103,7 @@ class Scheduler:
     @staticmethod
     def _hot_count(cfg_get) -> int:
         """榜单条数，clamp 到 1~30（配置可能填 0 或超大值）。"""
-        try:
-            return max(1, min(int(cfg_get("hot_push.count", 10)), 30))
-        except (TypeError, ValueError):
-            return 10
+        return clamp_int(cfg_get("hot_push.count", 10), 1, 30, 10)
 
     # ---- 热帖：全量日报 ----
     async def _maybe_daily_hot_push(self, *, today: str, now_time: str) -> int | None:
@@ -319,12 +318,11 @@ class Scheduler:
             await self._sub.reset_fail(s.tid)
             return
         new_floors.sort(key=lambda f: f.floor)
-        max_floor = new_floors[-1].floor
-        max_pid = new_floors[-1].pid
-        text_max = int(self._cfg_get("subscription.text_max_len", 2000))
-        image_max = int(self._cfg_get("subscription.image_max", 50))
-        # 送达语义：任一目标送达即推进游标；全部失败则保留游标，下轮重试整批楼层
-        delivered = False
+        text_max = clamp_int(self._cfg_get("subscription.text_max_len", 2000), 1, 100_000, 2000)
+        image_max = clamp_int(self._cfg_get("subscription.image_max", 50), 0, 500, 50)
+        # 送达语义：某楼层至少一个目标送达才把游标推进到该楼层；
+        # 全部失败（或仅部分楼层送达）时，未送达楼层保留，下轮重试
+        last_delivered: PostFloor | None = None
         for f in new_floors:
             text = f.text[:text_max]
             header = f"【{s.title}】{s.op_name} 更新 L{f.floor}"
@@ -338,11 +336,11 @@ class Scheduler:
             for umo in list(s.subscribers):
                 try:
                     await self._send(umo, content, images)
-                    delivered = True
+                    last_delivered = f
                 except Exception as exc:
                     logger.warning("sub check %s: 发送 L%d 到 %r 失败: %r", s.tid, f.floor, umo, exc)
-        if delivered:
-            await self._sub.update_baseline(s.tid, floor=max_floor, pid=max_pid)
+        if last_delivered is not None:
+            await self._sub.update_baseline(s.tid, floor=last_delivered.floor, pid=last_delivered.pid)
             await self._sub.reset_fail(s.tid)
         else:
             logger.warning("sub check %s: 全部订阅会话发送失败，保留游标，下轮重试", s.tid)

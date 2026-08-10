@@ -19,6 +19,27 @@ def cfg_get(config: dict, path: str, default: Any = None) -> Any:
     return cur if cur is not None else default
 
 
+def clamp_int(value, lo: int, hi: int, default: int) -> int:
+    """安全整数钳制：无法解析（None/空串/非数字）时返回 default。"""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(v, hi))
+
+
+def build_push_chain(text: str, images: list[str] | None, comp) -> list:
+    """构造推送消息链（文本 + 图片）。
+
+    comp 为 astrbot.api.message_components 模块（或等价的测试桩），
+    便于在无 astrbot 依赖的 dev venv 中单测。
+    """
+    chain = [comp.Plain(text=text)]
+    for url in images or []:
+        chain.append(comp.Image.fromURL(url))
+    return chain
+
+
 def resolve_comic_workdir(config: dict, default_dir: Path) -> Path:
     """漫画临时目录：优先 comic.workdir（容器部署时与协议端共享），否则默认目录。"""
     override = str(cfg_get(config, "comic.workdir", "") or "").strip()

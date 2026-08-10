@@ -117,7 +117,7 @@ class ForumClient:
             if self._nox_token is not None and time.monotonic() - self._token_solved_at <= TOKEN_TTL:
                 return True
             if time.monotonic() - self._solve_fail_at < SOLVE_BACKOFF_SEC:
-                return self._nox_token is not None
+                return False  # 退避期内不求解，也不宣称持有可用的新 token
             token = await self._solve()
             if token:
                 self._nox_token = token
