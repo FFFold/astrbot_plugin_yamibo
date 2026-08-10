@@ -71,6 +71,9 @@ def test_parse_notice_count():
     assert parse_notice_count("未读提醒 12 个") == 12
     # 两处同时存在时优先文案匹配
     assert parse_notice_count("未读提醒 2 个 <a class=\"ntc_l\">9</a>") == 2
+    # Discuz 通用导航徽标（部分模板）
+    assert parse_notice_count('<em class="prompt_news_7"></em>') == 7
+    assert parse_notice_count('<em class="prompt_news_0"></em>') == 0
     assert parse_notice_count("<html><body>no notice</body></html>") is None
     assert parse_notice_count("") is None
 

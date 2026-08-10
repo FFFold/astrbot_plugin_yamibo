@@ -11,6 +11,7 @@ FORMHASH_RE = re.compile(r"formhash=([a-f0-9]{8})")
 RANK_CACHE_NEXT_RE = re.compile(r"下次将于\s*(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
 NOTICE_TEXT_RE = re.compile(r"未读提醒[^0-9]*(\d+)")
 NOTICE_CLS_RE = re.compile(r'class="ntc_l"[^>]*>(\d+)')
+NOTICE_PROMPT_RE = re.compile(r'prompt_news_(\d+)')
 TZ = timezone(timedelta(hours=8))  # 东八区固定偏移（中国无夏令时，避免依赖 tzdata 包）；scheduler 复用此常量
 
 BBS_ORIGIN = "https://bbs.yamibo.com"
@@ -43,8 +44,10 @@ def extract_formhash(html: str) -> str | None:
 
 
 def parse_notice_count(html: str) -> int | None:
-    """未读提醒数量：优先「未读提醒 N」文案，其次 class=ntc_l 徽标；均未匹配返回 None。"""
-    for pattern in (NOTICE_TEXT_RE, NOTICE_CLS_RE):
+    """未读提醒数量：优先「未读提醒 N」文案，其次 ntc_l 徽标，再次 Discuz 通用
+    prompt_news_N 导航徽标；均未匹配返回 None（部分模板静态页不渲染数字，
+    由 JS 异步填充，调用方应接受 None 显示为「?」）。"""
+    for pattern in (NOTICE_TEXT_RE, NOTICE_CLS_RE, NOTICE_PROMPT_RE):
         m = pattern.search(html or "")
         if m:
             return int(m.group(1))
