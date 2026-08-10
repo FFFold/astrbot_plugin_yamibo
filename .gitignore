@@ -227,3 +227,6 @@ tests/.tmp/
 
 # 详细开发文档
 docs/dev/
+
+# AstrBot 运行时数据（t2i 模板/临时文件/命令配置等）
+/data/

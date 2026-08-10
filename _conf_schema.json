@@ -139,10 +139,10 @@
     "items": {
       "deliver_mode": {
         "description": "发送方式",
-        "hint": "auto：aiocqhttp 平台用 QQ 合并转发（每图一节点），其余平台用 PDF；可强制指定 pdf 或 merge_forward",
+        "hint": "auto：aiocqhttp 平台用 QQ 合并转发（每图一节点），其余平台用 PDF；可强制指定 pdf、fwd（合并转发）或 zip",
         "type": "string",
         "default": "auto",
-        "options": ["auto", "pdf", "merge_forward"]
+        "options": ["auto", "pdf", "fwd", "zip"]
       },
       "max_pages": {
         "description": "最大页数",
@@ -161,6 +161,12 @@
         "hint": "并发过高可能触发论坛风控，建议 2~8",
         "type": "int",
         "default": 4
+      },
+      "cleanup_delay_min": {
+        "description": "临时文件延迟清理（分钟）",
+        "hint": "发送后延迟该时长再清理下载目录，给协议端留出异步读取文件的时间；最小 1 分钟",
+        "type": "int",
+        "default": 10
       },
       "workdir": {
         "description": "临时文件目录（可选）",

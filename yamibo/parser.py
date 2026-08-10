@@ -3,12 +3,15 @@ from datetime import datetime, timedelta, timezone
 
 from bs4 import BeautifulSoup
 
-from yamibo.models import HotItem, PostFloor, SignStatus, ThreadContent, ThreadSummary
+from yamibo.models import HotItem, PostFloor, SignRecords, SignStatus, ThreadContent, ThreadSummary
 
 TID_RE = re.compile(r"thread-(\d+)-")
 UID_RE = re.compile(r"space-uid-(\d+)\.html")
 FORMHASH_RE = re.compile(r"formhash=([a-f0-9]{8})")
 RANK_CACHE_NEXT_RE = re.compile(r"下次将于\s*(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
+NOTICE_TEXT_RE = re.compile(r"未读提醒[^0-9]*(\d+)")
+NOTICE_CLS_RE = re.compile(r'class="ntc_l"[^>]*>(\d+)')
+NOTICE_PROMPT_RE = re.compile(r'prompt_news_(\d+)')
 TZ = timezone(timedelta(hours=8))  # 东八区固定偏移（中国无夏令时，避免依赖 tzdata 包）；scheduler 复用此常量
 
 BBS_ORIGIN = "https://bbs.yamibo.com"
@@ -40,6 +43,17 @@ def extract_formhash(html: str) -> str | None:
     return m.group(1) if m else None
 
 
+def parse_notice_count(html: str) -> int | None:
+    """未读提醒数量：优先「未读提醒 N」文案，其次 ntc_l 徽标，再次 Discuz 通用
+    prompt_news_N 导航徽标；均未匹配返回 None（部分模板静态页不渲染数字，
+    由 JS 异步填充，调用方应接受 None 显示为「?」）。"""
+    for pattern in (NOTICE_TEXT_RE, NOTICE_CLS_RE, NOTICE_PROMPT_RE):
+        m = pattern.search(html or "")
+        if m:
+            return int(m.group(1))
+    return None
+
+
 def parse_sign_status(html: str) -> SignStatus:
     """判断今日是否已签到。
 
@@ -66,21 +80,6 @@ def _tid_from_href(href: str) -> int | None:
 def _uid_from_href(href: str) -> int | None:
     m = UID_RE.search(href or "")
     return int(m.group(1)) if m else None
-
-
-def parse_hot_homepage(html: str) -> list[HotItem]:
-    soup = BeautifulSoup(html, "html.parser")
-    block = soup.select_one("#portal_block_52_content")
-    items: list[HotItem] = []
-    if not block:
-        return items
-    for li in block.select("ul li"):
-        a = li.select_one("a")
-        em = li.select_one("em")
-        tid = _tid_from_href(a.get("href")) if a else None
-        if tid:
-            items.append(HotItem(tid=tid, title=a.get_text(strip=True), date=em.get_text(strip=True) if em else ""))
-    return items
 
 
 def parse_ranklist(html: str) -> list[HotItem]:
@@ -240,15 +239,15 @@ def parse_search_results(html: str) -> list[ThreadSummary]:
     return items
 
 
-def parse_my_records(html: str) -> dict:
+def parse_my_records(html: str) -> SignRecords:
     soup = BeautifulSoup(html, "html.parser")
     table = soup.select_one("table.dt.mtm")
     rows = table.find_all("tr") if table else []
-    result = {"count": 0, "last_time": "", "last_reward": ""}
+    result = SignRecords()
     if len(rows) > 1:
         cells = rows[1].find_all("td")
         if cells:
-            result["count"] = max(0, len(rows) - 1)
-            result["last_time"] = cells[0].get_text(strip=True)
-            result["last_reward"] = cells[1].get_text(strip=True)
+            result.count = max(0, len(rows) - 1)
+            result.last_time = cells[0].get_text(strip=True)
+            result.last_reward = cells[1].get_text(strip=True)
     return result

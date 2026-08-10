@@ -10,11 +10,14 @@ from typing import Any
 
 from yamibo.client import NotLoggedInError
 from yamibo.hotpush import IncrState, compute_incremental
+from yamibo.models import PostFloor
 from yamibo.parser import TZ, parse_thread
 from yamibo.subscriber import Subscriber
+from yamibo.utils import clamp_int
 
 RANK_UPDATE_GRACE = 300  # 秒；榜单缓存更新时刻后等 5 分钟再抓，防源站 cron 延迟
-SendFn = Callable[[str, str], Awaitable[None]]
+# images 为该楼层的图片 URL 列表（已按 image_max 截断）；发送方负责按平台发送
+SendFn = Callable[[str, str, list[str]], Awaitable[None]]
 ConfigGet = Callable[[str, Any], Any]
 
 logger = logging.getLogger("yamibo")
@@ -62,7 +65,7 @@ class Scheduler:
         self._clock: Callable[[], float] = time.monotonic
         self._hot_incr_state: IncrState | None = None
         self._hot_daily_date: str | None = None
-        self._auth_fail_notified_at = 0.0  # 上次 cookie 失效告警时间（monotonic），用于去重
+        self._auth_fail_notified_at: float | None = None  # 上次 cookie 失效告警时间（monotonic），None=从未告警
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         self._running = False
@@ -100,10 +103,7 @@ class Scheduler:
     @staticmethod
     def _hot_count(cfg_get) -> int:
         """榜单条数，clamp 到 1~30（配置可能填 0 或超大值）。"""
-        try:
-            return max(1, min(int(cfg_get("hot_push.count", 10)), 30))
-        except (TypeError, ValueError):
-            return 10
+        return clamp_int(cfg_get("hot_push.count", 10), 1, 30, 10)
 
     # ---- 热帖：全量日报 ----
     async def _maybe_daily_hot_push(self, *, today: str, now_time: str) -> int | None:
@@ -278,18 +278,21 @@ class Scheduler:
         delivered = False
         for umo in targets if targets is not None else await self._sub.hot_targets():
             try:
-                await self._send(umo, text)
+                await self._send(umo, text, [])
                 delivered = True
             except Exception as exc:
                 logger.warning("hot push: failed to send to target %r: %r", umo, exc)
         return delivered
 
     async def _notify_auth_fail(self) -> None:
-        """cookie 失效告警（1 小时内去重，避免多循环各自触发轰炸）。"""
+        """cookie 失效告警（1 小时内去重，避免多循环各自触发轰炸）。
+
+        初始为 None（从未告警）：首次告警不因 monotonic 起始值小而被窗口吞掉。
+        """
         if not self._cfg_get("limits.notify_auth_fail", False):
             return
         now = time.monotonic()
-        if now - self._auth_fail_notified_at < 3600:
+        if self._auth_fail_notified_at is not None and now - self._auth_fail_notified_at < 3600:
             return
         self._auth_fail_notified_at = now
         await self._push_to_targets("【百合会助手】cookie 已失效，请管理员在插件配置中更新 auth/saltkey")
@@ -305,7 +308,7 @@ class Scheduler:
             except NotLoggedInError:
                 logger.error("sub check %s failed: cookie 失效", s.tid)
                 await self._notify_auth_fail()
-                return
+                continue  # 只跳过该订阅，其余订阅本轮继续检查
             except Exception as e:
                 logger.error("sub check %s failed: %s", s.tid, e)
                 await self._sub.bump_fail(s.tid)
@@ -318,24 +321,32 @@ class Scheduler:
             await self._sub.reset_fail(s.tid)
             return
         new_floors.sort(key=lambda f: f.floor)
-        max_floor = new_floors[-1].floor
-        max_pid = new_floors[-1].pid
+        text_max = clamp_int(self._cfg_get("subscription.text_max_len", 2000), 1, 100_000, 2000)
+        image_max = clamp_int(self._cfg_get("subscription.image_max", 50), 0, 500, 50)
+        # 送达语义：某楼层至少一个目标送达才把游标推进到该楼层；
+        # 全部失败（或仅部分楼层送达）时，未送达楼层保留，下轮重试
+        last_delivered: PostFloor | None = None
         for f in new_floors:
-            text = f.text[: int(self._cfg_get("subscription.text_max_len", 2000))]
+            text = f.text[:text_max]
             header = f"【{s.title}】{s.op_name} 更新 L{f.floor}"
             body = text if text.strip() else "(无文本)"
             url = f"https://bbs.yamibo.com/thread-{s.tid}-1-1.html"
             lines = [header, body, url]
-            images = f.images[: int(self._cfg_get("subscription.image_max", 50))]
+            images = f.images[:image_max]
             if images:
                 lines.append(f"（含图片 {len(images)} 张）")
+            content = "\n".join(lines)
             for umo in list(s.subscribers):
                 try:
-                    await self._send(umo, "\n".join(lines))
-                except Exception:
-                    pass
-        await self._sub.update_baseline(s.tid, floor=max_floor, pid=max_pid)
-        await self._sub.reset_fail(s.tid)
+                    await self._send(umo, content, images)
+                    last_delivered = f
+                except Exception as exc:
+                    logger.warning("sub check %s: 发送 L%d 到 %r 失败: %r", s.tid, f.floor, umo, exc)
+        if last_delivered is not None:
+            await self._sub.update_baseline(s.tid, floor=last_delivered.floor, pid=last_delivered.pid)
+            await self._sub.reset_fail(s.tid)
+        else:
+            logger.warning("sub check %s: 全部订阅会话发送失败，保留游标，下轮重试", s.tid)
 
     # ---- 循环主体 ----
     async def _run_sign_loop(self) -> None:

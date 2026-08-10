@@ -46,10 +46,17 @@ class ThreadContent:
 @dataclass
 class SignStatus:
     signed_today: bool
-    total_days: int = 0
-    month_days: int = 0
     last_reward: str = ""
     last_time: str = ""
+
+
+@dataclass
+class SignRecords:
+    """签到记录摘要（表格近 15 条）。"""
+
+    count: int = 0
+    last_time: str = ""
+    last_reward: str = ""
 
 
 @dataclass
@@ -70,7 +77,6 @@ class Subscription:
     op_name: str
     last_floor: int
     last_pid: int
-    only_op: bool
     subscribers: list[str] = field(default_factory=list)
     created_at: int = 0
     paused: bool = False

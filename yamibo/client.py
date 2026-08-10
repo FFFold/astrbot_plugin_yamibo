@@ -1,5 +1,6 @@
 """论坛传输层：aiohttp 会话、cookie、405 挑战求解重试、登录态检测。"""
 
+import asyncio
 import re
 import time
 from datetime import datetime
@@ -15,6 +16,7 @@ UID_RE = re.compile(r"discuz_uid\s*=\s*'(\d+)'")
 SCRIPT_SRC_RE = re.compile(r'<script[^>]+src="([^"]*nox[^"]*\.js)"')
 
 TOKEN_TTL = 600  # 秒；观察有效期约 20-30 分钟，10 分钟预刷新
+SOLVE_BACKOFF_SEC = 60  # 求解失败后的退避窗口；WAF 故障期间避免请求量放大
 
 
 class ForumError(Exception):
@@ -50,6 +52,8 @@ class ForumClient:
         self._solver = WafSolver(user_agent)
         self._nox_token: str | None = None
         self._token_solved_at = 0.0
+        self._solve_fail_at = 0.0
+        self._token_lock = asyncio.Lock()
 
     @property
     def base_url(self) -> str:
@@ -103,13 +107,25 @@ class ForumClient:
         assert self._session is not None
         self._session.cookie_jar.update_cookies(cookies, response_url=URL(self._base))
 
-    async def refresh_token(self) -> None:
-        """解一次挑战，更新 nox_jst_v1。"""
-        token = await self._solve()
-        if token:
-            self._nox_token = token
-            self._token_solved_at = time.monotonic()
-            self._apply_static_cookies()
+    async def refresh_token(self) -> bool:
+        """解一次挑战，更新 nox_jst_v1。
+
+        返回是否持有（新）token。多调度循环并发调用时共用一把锁，只有一个协程真正求解；
+        求解失败记录失败时刻，退避窗口内不再重试，避免 WAF 故障期间请求量放大。
+        """
+        async with self._token_lock:
+            if self._nox_token is not None and time.monotonic() - self._token_solved_at <= TOKEN_TTL:
+                return True
+            if time.monotonic() - self._solve_fail_at < SOLVE_BACKOFF_SEC:
+                return False  # 退避期内不求解，也不宣称持有可用的新 token
+            token = await self._solve()
+            if token:
+                self._nox_token = token
+                self._token_solved_at = time.monotonic()
+                self._apply_static_cookies()
+            else:
+                self._solve_fail_at = time.monotonic()
+            return token is not None
 
     async def _solve(self) -> str | None:
         assert self._session is not None
@@ -147,7 +163,9 @@ class ForumClient:
         url = path if path.startswith("http") else self._base + path
         resp = await self._session.get(url)
         if resp.status == 405 and retry_waf:
-            await self.refresh_token()
+            refreshed = await self.refresh_token()
+            if not refreshed:
+                raise WafError("WAF 挑战求解失败（退避中），请稍后再试或配置 manual_nox_token 兜底")
             resp = await self._session.get(url)
             if resp.status == 405:
                 raise WafError("WAF challenge 求解后仍返回 405，cookie 可能已失效")
