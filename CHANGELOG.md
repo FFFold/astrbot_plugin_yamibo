@@ -21,7 +21,9 @@
 
 ### 其他
 
-- 启动初始化失败时重置运行态并记录可诊断日志（done-callback 兜底）；`notices` 正则迁入 parser 并配单测；接入 GitHub Actions CI（pytest + ruff，Windows/Python 3.10/3.12）
+- 启动初始化失败时重置运行态并记录可诊断日志（done-callback 兜底）；接入 GitHub Actions CI（pytest + ruff，Windows/Python 3.10/3.12）
+- **未读提醒解析扩展**：`notices` 正则迁入 parser 并配单测，同时支持 Discuz 通用 `prompt_news_N` 导航徽标——部分模板（如当前百合会模板）静态页不再固定显示「?」
+- **新增真实论坛集成测试**：`scripts/integration_test.py` 读取 AstrBot 配置中的 cookie，只读验证登录态/WAF token 并发刷新/订阅推送与游标/漫画下载（失败统计、原子写、缓存复用、延迟清理）/提醒解析/真实消息链构造（AstrBot venv）
 
 ## [0.2.1] - 2026-08-08
 
