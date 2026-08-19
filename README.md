@@ -7,7 +7,7 @@
 自动签到 · 热帖推送 · 漫画打包 · 订阅追踪 · 浏览搜索
 
 <!-- 版本徽章与 metadata.yaml / pyproject.toml / yamibo/__init__.py 同步 -->
-![版本](https://img.shields.io/badge/version-0.2.2-blue?style=flat-square)
+![版本](https://img.shields.io/badge/version-0.2.3-blue?style=flat-square)
 ![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.9.2-8a2be2?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-2e8b57?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-orange?style=flat-square)
@@ -131,7 +131,7 @@ pip install -r requirements.txt
 ## 📌 说明与限制
 
 - **订阅机制**：按「只看楼主」跟踪（Discuz `authorid` 视图），楼主新楼层内容（文本+图片）统一推送，图片上限见 `subscription.image_max`；仅当至少一个目标送达才推进游标，全部失败（或部分楼层未送达）保留游标下轮重试，连续失败 3 次自动暂停（`订阅列表` 可见），恢复更新后自动解除
-- **漫画发送**：aiocqhttp 平台默认合并转发（首条为标题+原帖链接，随后每图一节点、100 节点分批、批间 2 秒）；其余平台默认 PDF；也可用 `zip` 模式打包；PDF/ZIP 超过 `max_file_size_mb` 回退为逐张发送前 20 张；下载失败的图片会提示数量（单张自动重试 1 次）
+- **漫画发送**：aiocqhttp 平台默认合并转发（首条为标题+原帖链接，随后每图一节点、100 节点分批、批间 2 秒）；其余平台默认 PDF；也可用 `zip` 模式打包；PDF/ZIP 超过 `max_file_size_mb` 提示无法发送；下载失败的图片会提示数量（单张自动重试 1 次）
 - **登录态维护**：插件会自动求解 WAF 挑战并定期刷新会话；cookie 过期时执行 `/yamibo cookie状态` 检测，重新提取填入即可（可选配置 `manual_nox_token` 兜底）
 - **隐私**：签到/提醒等个人数据仅管理员可用；隐藏内容（`[hide]`/购买）默认跳过不推送
 - **运行前提**：自动签到与推送依赖 AstrBot 常驻在线
