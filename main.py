@@ -381,9 +381,7 @@ class AstrBotPlugin(Star):
                         limit = int(cfg_get(self.config, "comic.max_file_size_mb", 45)) * 1024 * 1024
                         out, over_size = build_file_chain(res.files, tid_num, tc.title, kind, limit)
                         if over_size:
-                            for f in res.files[:20]:
-                                yield event.image_result(str(f))
-                            yield event.plain_result(f"{kind.upper()} 超过大小限制，已改为发送前 20 张图片")
+                            yield event.plain_result(f"{kind.upper()} 超过大小限制，无法发送")
                         else:
                             yield event.chain_result(out)
                 finally:

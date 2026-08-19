@@ -45,7 +45,7 @@ Discuz 的登录态校验依赖 `auth + saltkey` 的组合。只填 `auth` 会�
 
 ### PDF 太大发不出去？
 
-超过配置 `comic.max_file_size_mb`（默认 45MB，考虑 Telegram 50MB 限制）会自动回退为逐张发送前 20 张图片。可调低 `max_pages` 限制页数。
+超过配置 `comic.max_file_size_mb`（默认 45MB，考虑 Telegram 50MB 限制）会提示无法发送。可调低 `max_pages` 限制页数。
 
 ### 容器部署时协议端读不到文件？
 

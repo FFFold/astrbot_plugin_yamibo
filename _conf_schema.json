@@ -152,7 +152,7 @@
       },
       "max_file_size_mb": {
         "description": "文件大小上限（MB）",
-        "hint": "PDF 超过该大小回退为逐张发送前 20 张图片（部分平台如 Telegram 有 50MB 限制）",
+        "hint": "PDF 超过该大小提示无法发送（部分平台如 Telegram 有 50MB 限制）",
         "type": "int",
         "default": 45
       },
