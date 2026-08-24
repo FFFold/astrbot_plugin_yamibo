@@ -156,6 +156,19 @@ class Subscriber:
                 break
         await self._save_subs(items)
 
+    async def resume_all(self) -> int:
+        """恢复所有被暂停的订阅（fail_count 清零）。返回恢复数量。"""
+        items = await self._load_subs()
+        n = 0
+        for d in items:
+            if bool(d.get("paused", False)):
+                d["paused"] = False
+                d["fail_count"] = 0
+                n += 1
+        if n:
+            await self._save_subs(items)
+        return n
+
     async def add_hot_target(self, umo: str) -> bool:
         data = await self._load(_KEY_HOT_TARGETS)
         items = data.get("items", [])

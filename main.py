@@ -493,7 +493,15 @@ class AstrBotPlugin(Star):
         for s in subs:
             state = "（已暂停）" if s.paused else ""
             lines.append(f"{s.tid} | {s.title}{state} | 跟踪至 L{s.last_floor}")
+        lines.append("提示：订阅已被暂停时可使用 /yamibo 订阅恢复 解除。")
         yield event.plain_result("\n".join(lines))
+
+    @yamibo.command("订阅恢复")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def sub_resume(self, event: AstrMessageEvent):
+        """恢复所有被暂停的订阅（管理员）。"""
+        n = await self.subscriber.resume_all()
+        yield event.plain_result(f"已恢复 {n} 个订阅。" if n else "没有需要恢复的订阅。")
 
     @yamibo.command("取消订阅")
     async def sub_remove(self, event: AstrMessageEvent, tid: str):
@@ -522,6 +530,7 @@ class AstrBotPlugin(Star):
             "【订阅推送】\n"
             "/yamibo 订阅 <tid|链接> — 订阅帖子更新（只看楼主）\n"
             "/yamibo 订阅列表 — 查看本会话订阅\n"
+            "/yamibo 订阅恢复 — 恢复所有被暂停的订阅（管理员）\n"
             "/yamibo 取消订阅 <tid> — 取消订阅\n"
             "/yamibo 订阅热帖 — 开启本会话热帖推送\n"
             "/yamibo 取消热帖 — 关闭热帖推送\n"

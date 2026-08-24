@@ -23,6 +23,16 @@ from yamibo.utils import (
 )
 
 RANK_UPDATE_GRACE = 300  # 秒；榜单缓存更新时刻后等 5 分钟再抓，防源站 cron 延迟
+# 订阅内容发送「全员失败」连续达到该次数后停止重试并抛出异常（进入既有暂停计数链路）
+MAX_SUB_SEND_RETRIES = 5
+
+logger = logging.getLogger("yamibo")
+
+
+class SubSendRetryExhaustedError(Exception):
+    """订阅内容发送连续失败次数达到上限，不再静默重试。"""
+
+
 # images 为该楼层的图片 URL 列表（已按 image_max 截断）；发送方负责按平台发送
 SendFn = Callable[[str, str, list[str]], Awaitable[None]]
 # 订阅内容推送：payload 由 utils.build_sub_payload 组装（转发节点列表或整批直发文本）
@@ -78,6 +88,8 @@ class Scheduler:
         self._send = send
         self._send_sub = send_sub
         self._forward_check = forward_check
+        # 订阅内容发送「全员失败」的连续计数（tid -> 次数），成功轮/无新楼层时清空
+        self._sub_send_fails: dict[int, int] = {}
         self._clock: Callable[[], float] = time.monotonic
         self._hot_incr_state: IncrState | None = None
         self._hot_daily_date: str | None = None
@@ -335,10 +347,16 @@ class Scheduler:
         new_floors = [f for f in tc.floors if f.floor > s.last_floor and f.author_uid == s.op_uid]
         if not new_floors:
             await self._sub.reset_fail(s.tid)
+            self._sub_send_fails.pop(s.tid, None)
             return
         new_floors.sort(key=lambda f: f.floor)
         text_max = clamp_int(self._cfg_get("subscription.text_max_len", 2000), 1, 100_000, 2000)
         image_max = clamp_int(self._cfg_get("subscription.image_max", 50), 0, 500, 50)
+        if self._sub_send_fails.get(s.tid, 0) >= MAX_SUB_SEND_RETRIES:
+            # 已耗尽重试上限：本轮不再尝试发送，抛给上层进入暂停计数链路
+            raise SubSendRetryExhaustedError(
+                f"订阅 {s.tid} 内容发送连续 {self._sub_send_fails[s.tid]} 轮失败，停止重试"
+            )
         subs = list(s.subscribers)
         # 送达语义：楼层按 FORWARD_CHUNK 分批。某批至少一个会话送达才视为该批送达；
         # 遇到全员失败批次立即停止（后续批次下轮重试），游标推进到最后一成功批次末楼层。
@@ -383,8 +401,20 @@ class Scheduler:
                 except Exception as exc:
                     logger.warning("sub check %s: 通知发送到 %r 失败: %r", s.tid, umo, exc)
         if delivered is None:
-            logger.warning("sub check %s: 全部订阅会话发送失败，保留游标，下轮重试", s.tid)
+            # 全员失败：计满上限后不再静默重试，抛给上层进入暂停计数链路
+            n = self._sub_send_fails.get(s.tid, 0) + 1
+            if n >= MAX_SUB_SEND_RETRIES:
+                self._sub_send_fails[s.tid] = n
+                raise SubSendRetryExhaustedError(
+                    f"订阅 {s.tid} 内容发送连续 {n} 轮失败，停止重试"
+                )
+            self._sub_send_fails[s.tid] = n
+            logger.warning(
+                "sub check %s: 全部订阅会话发送失败（第 %d/%d 轮），保留游标，下轮重试",
+                s.tid, n, MAX_SUB_SEND_RETRIES,
+            )
             return
+        self._sub_send_fails.pop(s.tid, None)
         await self._sub.update_baseline(s.tid, floor=delivered.floor, pid=delivered.pid)
         await self._sub.reset_fail(s.tid)
 

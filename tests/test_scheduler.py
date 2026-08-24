@@ -3,7 +3,14 @@ import pytest
 from yamibo.client import NotLoggedInError
 from yamibo.hotpush import IncrState
 from yamibo.models import HotItem, SignStatus, Subscription
-from yamibo.scheduler import RANK_UPDATE_GRACE, Scheduler, _parse_hhmm, _target_sleep_seconds
+from yamibo.scheduler import (
+    MAX_SUB_SEND_RETRIES,
+    RANK_UPDATE_GRACE,
+    Scheduler,
+    SubSendRetryExhaustedError,
+    _parse_hhmm,
+    _target_sleep_seconds,
+)
 from yamibo.utils import cfg_get
 
 UMO = "aiocqhttp:group:111"
@@ -591,6 +598,69 @@ async def test_scheduler_requires_send_sub():
 
     with pytest.raises(TypeError):
         Scheduler(Fake(), Fake(), lambda k, d=None: None, send)
+
+
+async def test_sub_check_send_retry_exhausted_raises(make_sched):
+    """发送全员失败达到上限：不再静默重试，抛出 RetryExhausted。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
+    attempts = 0
+
+    async def bad_sub_send(umo, payload):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("boom")
+
+    s._send_sub = bad_sub_send
+    for _ in range(MAX_SUB_SEND_RETRIES - 1):
+        await s._check_one(_sub())  # 第 1..4 轮静默重试
+        assert attempts <= MAX_SUB_SEND_RETRIES - 1
+    with pytest.raises(SubSendRetryExhaustedError):
+        await s._check_one(_sub())  # 第 5 轮达到上限
+    assert attempts == MAX_SUB_SEND_RETRIES
+
+
+async def test_sub_check_send_exhausted_stops_attempting(make_sched):
+    """达到上限后：后续轮次直接抛出，不再尝试发送。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
+    attempts = 0
+
+    async def bad_sub_send(umo, payload):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("boom")
+
+    s._send_sub = bad_sub_send
+    for _ in range(MAX_SUB_SEND_RETRIES - 1):
+        await s._check_one(_sub())
+    for _ in range(2):  # 第 5 轮（最后一次尝试，失败后抛）与第 6 轮（不再尝试）：均抛出
+        with pytest.raises(SubSendRetryExhaustedError):
+            await s._check_one(_sub())
+    assert attempts == MAX_SUB_SEND_RETRIES  # 第 6 轮起未再调用发送
+    assert sub.baseline_updates == []
+    assert sub.resets == []
+
+
+async def test_sub_check_send_fail_counter_resets_on_success(make_sched):
+    """计数只计连续失败：中途成功一次后重置，新一轮失败重新计数。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
+    fail = {"on": True}
+
+    async def flaky_sub_send(umo, payload):
+        if fail["on"]:
+            raise RuntimeError("boom")
+        await rec.sub_send(umo, payload)
+
+    s._send_sub = flaky_sub_send
+    for _ in range(MAX_SUB_SEND_RETRIES - 2):
+        await s._check_one(_sub())
+    fail["on"] = False
+    await s._check_one(_sub())  # 成功：重置计数
+    assert rec.planned  # 至少送达一次
+    fail["on"] = True
+    for _ in range(MAX_SUB_SEND_RETRIES - 1):
+        await s._check_one(_sub())  # 恢复失败：连续计数需重新达到上限
+    with pytest.raises(SubSendRetryExhaustedError):
+        await s._check_one(_sub())
 
 
 async def test_sub_check_batch_success_advances_to_batch_end(make_sched):

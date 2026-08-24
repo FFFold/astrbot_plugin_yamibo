@@ -68,6 +68,24 @@ async def test_baseline_and_fail(store, sub):
     assert s3.paused is False and s3.fail_count == 0
 
 
+async def test_resume_all_clears_paused(store, sub):
+    await _mk(sub, 574233, UMO_A)
+    await _mk(sub, 574999, UMO_B)
+    for tid in (574233, 574999):
+        for _ in range(3):
+            await sub.bump_fail(tid)
+    assert all(s.paused for s in await sub.all())
+    assert await sub.resume_all() == 2
+    for s in await sub.all():
+        assert s.paused is False and s.fail_count == 0
+
+
+async def test_resume_all_no_paused_subs(store, sub):
+    await _mk(sub, 574233, UMO_A)
+    assert await sub.resume_all() == 0
+    assert (await sub.all())[0].paused is False
+
+
 async def test_hot_targets(store, sub):
     assert await sub.add_hot_target(UMO_A) is True
     assert await sub.add_hot_target(UMO_A) is False
