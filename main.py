@@ -501,6 +501,8 @@ class AstrBotPlugin(Star):
     async def sub_resume(self, event: AstrMessageEvent):
         """恢复所有被暂停的订阅（管理员）。"""
         n = await self.subscriber.resume_all()
+        if self.scheduler is not None:
+            self.scheduler.reset_sub_send_fails()
         yield event.plain_result(f"已恢复 {n} 个订阅。" if n else "没有需要恢复的订阅。")
 
     @yamibo.command("取消订阅")

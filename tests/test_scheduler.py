@@ -663,6 +663,46 @@ async def test_sub_check_send_fail_counter_resets_on_success(make_sched):
         await s._check_one(_sub())
 
 
+async def test_reset_sub_send_fails_releases_retry_guard(make_sched):
+    """订阅恢复语义：重置内存计数后，耗尽 guard 不再拦截，可重新尝试发送。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
+    attempts = 0
+
+    async def bad_sub_send(umo, payload):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("boom")
+
+    s._send_sub = bad_sub_send
+    for _ in range(MAX_SUB_SEND_RETRIES - 1):
+        await s._check_one(_sub())  # 第 1..4 轮静默重试
+    with pytest.raises(SubSendRetryExhaustedError):
+        await s._check_one(_sub())  # 第 5 轮达到上限
+    assert attempts == MAX_SUB_SEND_RETRIES
+    s.reset_sub_send_fails()
+    await s._check_one(_sub())  # guard 解除：再次尝试发送（失败静默，计数重新起算）
+    assert attempts == MAX_SUB_SEND_RETRIES + 1
+
+
+async def test_sub_check_notice_only_to_full_delivery_sessions(make_sched):
+    """多批场景：只有全部批次都送达的会话收到通知，部分送达会话不收到误导范围。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: u == UMO)
+    client.sub_author_html = _floors_html(12, 112)  # 两批（100 + 1）
+    sub_model = _sub(subscribers=[UMO, "telegram:chat:999"])
+
+    async def flaky_sub_send(umo, payload):
+        if umo == "telegram:chat:999" and payload.items[0].floor == 12:
+            raise RuntimeError("boom")  # 电报会话第一批失败、第二批成功
+        await rec.sub_send(umo, payload)
+
+    s._send_sub = flaky_sub_send
+    await s._check_one(sub_model)
+    assert len(rec.planned) == 3  # A 两批 + B 第二批（B 第一批失败未记录）
+    assert rec.sent == [(UMO, "【T】op 更新了 L12-L112", [])]  # 仅全批成功的会话
+    assert sub.baseline_updates == [(574233, 112, 3112)]
+    assert sub.resets == [574233]
+
+
 async def test_sub_check_batch_success_advances_to_batch_end(make_sched):
     s, client, sub, rec = make_sched(forward_check=lambda u: True)
     client.sub_author_html = SUB_AUTHOR_TWO_FLOORS

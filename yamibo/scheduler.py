@@ -101,6 +101,10 @@ class Scheduler:
     def set_clock_now(self, fn: Callable[[], float]) -> None:
         self._clock = fn
 
+    def reset_sub_send_fails(self) -> None:
+        """清空订阅发送失败计数（'/yamibo 订阅恢复' 调用，解除重试耗尽拦截）。"""
+        self._sub_send_fails.clear()
+
     async def _sleep(self, seconds: float) -> None:
         try:
             await asyncio.wait_for(self._stop.wait(), timeout=seconds)
@@ -358,12 +362,14 @@ class Scheduler:
                 f"订阅 {s.tid} 内容发送连续 {self._sub_send_fails[s.tid]} 轮失败，停止重试"
             )
         subs = list(s.subscribers)
+        chunks = chunk_list(new_floors, FORWARD_CHUNK)
         # 送达语义：楼层按 FORWARD_CHUNK 分批。某批至少一个会话送达才视为该批送达；
         # 遇到全员失败批次立即停止（后续批次下轮重试），游标推进到最后一成功批次末楼层。
-        # 全部批次成功后才对「成功送达的会话」发一条通知（失败仅记录日志，不阻塞游标）。
-        deliver_ok: set[str] = set()
+        # 全部批次成功后仅对「全部批次都送达的会话」发一条通知（部分送达的会话不收到
+        # 误导性的完整范围）；通知失败仅记录日志，不阻塞游标。
+        sess_delivered: dict[str, int] = {}
         delivered: PostFloor | None = None
-        for chunk in chunk_list(new_floors, FORWARD_CHUNK):
+        for chunk in chunks:
             any_ok = False
             for umo in subs:
                 # 非转发平台按字符预算拆子批（合并超限平台单条上限会必然失败）；
@@ -389,13 +395,15 @@ class Scheduler:
                         break
                 if umo_ok:
                     any_ok = True
-                    deliver_ok.add(umo)
+                    sess_delivered[umo] = sess_delivered.get(umo, 0) + 1
             if not any_ok:
                 break
             delivered = chunk[-1]
         else:
             notice = fmt_sub_notice(s.title, s.op_name, (f.floor for f in new_floors))
-            for umo in sorted(deliver_ok):
+            for umo in sorted(sess_delivered):
+                if sess_delivered[umo] < len(chunks):
+                    continue  # 该会话漏了至少一批：不发通知（避免谎报完整范围）
                 try:
                     await self._send(umo, notice, [])
                 except Exception as exc:
