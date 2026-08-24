@@ -13,11 +13,22 @@ from yamibo.hotpush import IncrState, compute_incremental
 from yamibo.models import PostFloor
 from yamibo.parser import TZ, parse_thread
 from yamibo.subscriber import Subscriber
-from yamibo.utils import clamp_int
+from yamibo.utils import (
+    FORWARD_CHUNK,
+    build_sub_payload,
+    chunk_list,
+    clamp_int,
+    fmt_sub_notice,
+    split_plain_batches,
+)
 
 RANK_UPDATE_GRACE = 300  # 秒；榜单缓存更新时刻后等 5 分钟再抓，防源站 cron 延迟
 # images 为该楼层的图片 URL 列表（已按 image_max 截断）；发送方负责按平台发送
 SendFn = Callable[[str, str, list[str]], Awaitable[None]]
+# 订阅内容推送：payload 由 utils.build_sub_payload 组装（转发节点列表或整批直发文本）
+SubSendFn = Callable[[str, Any], Awaitable[None]]
+# 判断某个 umo 会话是否运行在支持合并转发的平台上
+ForwardCheck = Callable[[str], bool]
 ConfigGet = Callable[[str, Any], Any]
 
 logger = logging.getLogger("yamibo")
@@ -57,11 +68,16 @@ class Scheduler:
         sub: Subscriber,
         config_get: ConfigGet,
         send: SendFn,
+        *,
+        send_sub: SubSendFn,
+        forward_check: ForwardCheck | None = None,
     ) -> None:
         self._client = client
         self._sub = sub
         self._cfg_get = config_get
         self._send = send
+        self._send_sub = send_sub
+        self._forward_check = forward_check
         self._clock: Callable[[], float] = time.monotonic
         self._hot_incr_state: IncrState | None = None
         self._hot_daily_date: str | None = None
@@ -323,30 +339,54 @@ class Scheduler:
         new_floors.sort(key=lambda f: f.floor)
         text_max = clamp_int(self._cfg_get("subscription.text_max_len", 2000), 1, 100_000, 2000)
         image_max = clamp_int(self._cfg_get("subscription.image_max", 50), 0, 500, 50)
-        # 送达语义：某楼层至少一个目标送达才把游标推进到该楼层；
-        # 全部失败（或仅部分楼层送达）时，未送达楼层保留，下轮重试
-        last_delivered: PostFloor | None = None
-        for f in new_floors:
-            text = f.text[:text_max]
-            header = f"【{s.title}】{s.op_name} 更新 L{f.floor}"
-            body = text if text.strip() else "(无文本)"
-            url = f"https://bbs.yamibo.com/thread-{s.tid}-1-1.html"
-            lines = [header, body, url]
-            images = f.images[:image_max]
-            if images:
-                lines.append(f"（含图片 {len(images)} 张）")
-            content = "\n".join(lines)
-            for umo in list(s.subscribers):
-                try:
-                    await self._send(umo, content, images)
-                    last_delivered = f
-                except Exception as exc:
-                    logger.warning("sub check %s: 发送 L%d 到 %r 失败: %r", s.tid, f.floor, umo, exc)
-        if last_delivered is not None:
-            await self._sub.update_baseline(s.tid, floor=last_delivered.floor, pid=last_delivered.pid)
-            await self._sub.reset_fail(s.tid)
+        subs = list(s.subscribers)
+        # 送达语义：楼层按 FORWARD_CHUNK 分批。某批至少一个会话送达才视为该批送达；
+        # 遇到全员失败批次立即停止（后续批次下轮重试），游标推进到最后一成功批次末楼层。
+        # 全部批次成功后才对「成功送达的会话」发一条通知（失败仅记录日志，不阻塞游标）。
+        deliver_ok: set[str] = set()
+        delivered: PostFloor | None = None
+        for chunk in chunk_list(new_floors, FORWARD_CHUNK):
+            any_ok = False
+            for umo in subs:
+                # 非转发平台按字符预算拆子批（合并超限平台单条上限会必然失败）；
+                # 批次/载荷构建异常属于程序错误，向上抛由 _maybe_check_subs 计数暂停，不作静默重试
+                mode = "forward" if self._forward_check is not None and self._forward_check(umo) else "plain"
+                batches = [chunk] if mode == "forward" else split_plain_batches(
+                    s.title, s.op_name, s.tid, chunk, text_max=text_max,
+                )
+                umo_ok = False
+                for sub_chunk in batches:
+                    payload = build_sub_payload(
+                        s.title, s.op_name, s.tid, sub_chunk,
+                        mode=mode, text_max=text_max, image_max=image_max,
+                    )
+                    try:
+                        await self._send_sub(umo, payload)
+                        umo_ok = True
+                    except Exception as exc:
+                        logger.warning(
+                            "sub check %s: 发送 L%d-L%d 到 %r 失败: %r",
+                            s.tid, sub_chunk[0].floor, sub_chunk[-1].floor, umo, exc,
+                        )
+                        break
+                if umo_ok:
+                    any_ok = True
+                    deliver_ok.add(umo)
+            if not any_ok:
+                break
+            delivered = chunk[-1]
         else:
+            notice = fmt_sub_notice(s.title, s.op_name, (f.floor for f in new_floors))
+            for umo in sorted(deliver_ok):
+                try:
+                    await self._send(umo, notice, [])
+                except Exception as exc:
+                    logger.warning("sub check %s: 通知发送到 %r 失败: %r", s.tid, umo, exc)
+        if delivered is None:
             logger.warning("sub check %s: 全部订阅会话发送失败，保留游标，下轮重试", s.tid)
+            return
+        await self._sub.update_baseline(s.tid, floor=delivered.floor, pid=delivered.pid)
+        await self._sub.reset_fail(s.tid)
 
     # ---- 循环主体 ----
     async def _run_sign_loop(self) -> None:

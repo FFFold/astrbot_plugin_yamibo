@@ -1,23 +1,30 @@
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
-from yamibo.models import HotItem, ThreadSummary
+from yamibo.models import HotItem, PostFloor, ThreadSummary
 from yamibo.parser import TZ
 from yamibo.utils import (
     FORUM_ALIASES,
     FORUM_NAMES,
     AsyncLockRegistry,
     build_push_chain,
+    build_sub_payload,
     cfg_get,
     clamp_int,
     cooldown_ok,
     fmt_comic_header,
+    fmt_floor_range,
     fmt_list,
+    fmt_sub_floor_text,
+    fmt_sub_notice,
     fmt_time,
+    is_aiocqhttp_target,
     normalize_deliver_mode,
     parse_tid_input,
     resolve_comic_workdir,
     resolve_fid,
+    split_plain_batches,
     truncate,
 )
 
@@ -208,3 +215,121 @@ def test_fmt_list_limit():
     lines = out.splitlines()
     assert len(lines) == 17  # 标题 + 15 条 + 提示
     assert "仅显示前 15 条" in out
+
+
+# ---- 订阅推送组装 ----
+
+def _floor(floor: int, *, text: str = "内容", images: list[str] | None = None, pid: int) -> PostFloor:
+    return PostFloor(pid=pid, floor=floor, author_uid=7, author_name="op", time="", text=text, images=images or [])
+
+
+def test_fmt_floor_range():
+    assert fmt_floor_range([12]) == "L12"
+    assert fmt_floor_range([12, 13]) == "L12-L13"
+    assert fmt_floor_range([12, 14]) == "L12、L14"
+    assert fmt_floor_range([12, 13, 15, 16, 17]) == "L12-L13、L15-L17"
+    assert fmt_floor_range([12, 12]) == "L12"  # 去重
+    assert fmt_floor_range([]) == ""
+
+
+def test_fmt_sub_floor_text():
+    out = fmt_sub_floor_text("T", "op", 12, "楼主新楼层", "https://bbs.yamibo.com/thread-574233-1-1.html")
+    assert out == (
+        "【T】op 更新 L12\n"
+        "楼主新楼层\n"
+        "https://bbs.yamibo.com/thread-574233-1-1.html"
+    )
+
+
+def test_fmt_sub_floor_text_empty_body():
+    out = fmt_sub_floor_text("T", "op", 12, "   ", "https://bbs.yamibo.com/thread-574233-1-1.html")
+    assert "(无文本)" in out
+
+
+def test_fmt_sub_notice():
+    assert fmt_sub_notice("T", "op", [12]) == "【T】op 更新了 L12"
+    assert fmt_sub_notice("T", "op", [12, 13, 15]) == "【T】op 更新了 L12-L13、L15"
+
+
+def test_build_sub_payload_forward():
+    url = "https://bbs.yamibo.com/thread-574233-1-1.html"
+    p = build_sub_payload("T", "op", 574233, [_floor(12, pid=2002)], mode="forward", text_max=2000, image_max=50)
+    assert p.mode == "forward"
+    assert len(p.items) == 1
+    it = p.items[0]
+    assert it.floor == 12
+    assert it.name == "op"
+    assert it.text == f"【T】op 更新 L12\n内容\n{url}"
+    assert it.image_urls == []
+
+
+def test_build_sub_payload_plain_same_shape():
+    url = "https://bbs.yamibo.com/thread-574233-1-1.html"
+    floors = [_floor(12, pid=2002), _floor(13, text="第二层", images=["u1"], pid=2003)]
+    p = build_sub_payload("T", "op", 574233, floors, mode="plain", text_max=2000, image_max=50)
+    assert p.mode == "plain"
+    assert len(p.items) == 2
+    assert p.items[1].text == f"【T】op 更新 L13\n第二层\n{url}"
+    assert p.items[1].image_urls == ["u1"]
+
+
+def test_build_sub_payload_applies_text_max():
+    p = build_sub_payload(
+        "T", "op", 574233, [_floor(12, text="x" * 500, pid=2002)], mode="forward", text_max=100, image_max=50
+    )
+    assert len(p.items[0].text.splitlines()[1]) == 100
+
+
+def test_build_sub_payload_applies_image_max():
+    p = build_sub_payload(
+        "T", "op", 574233,
+        [_floor(12, images=["a", "b", "c"], pid=2002)],
+        mode="forward", text_max=2000, image_max=1,
+    )
+    assert p.items[0].image_urls == ["a"]
+
+
+def test_split_plain_batches_merges_within_budget():
+    """短楼层合并进同批；累计超出预算时开新批。"""
+    floors = [_floor(12, text="x" * 500, pid=2002), _floor(13, text="y" * 500, pid=2003)
+              ] + [_floor(14, text="z" * 500, pid=2004), _floor(15, text="w" * 500, pid=2005)]
+    batches = split_plain_batches("T", "op", 574233, floors, text_max=2000, budget=1500)
+    assert [len(b) for b in batches] == [2, 2]
+    assert batches[0][0].floor == 12 and batches[0][1].floor == 13
+    assert batches[1][0].floor == 14
+
+
+def test_split_plain_batches_lonely_floor_exceeding_budget():
+    """单层文本超预算：自成一批，不阻塞后续楼层。"""
+    floors = [_floor(12, text="a" * 300, pid=2002), _floor(13, text="b" * 300, pid=2003)]
+    batches = split_plain_batches("T", "op", 574233, floors, text_max=2000, budget=350)
+    assert [len(b) for b in batches] == [1, 1]
+
+
+def test_split_plain_batches_budget_by_text_max():
+    """floors 的合并成本按 text_max 截断后的文本计。"""
+    floors = [_floor(12, text="a" * 9999, pid=2002), _floor(13, text="b" * 9999, pid=2003)]
+    batches = split_plain_batches("T", "op", 574233, floors, text_max=600, budget=1200)
+    assert [len(b) for b in batches] == [1, 1]
+
+
+def test_is_aiocqhttp_target():
+    class _FakePlatform:
+        def __init__(self, name):
+            self._name = name
+
+        def meta(self):
+            return SimpleNamespace(name=self._name)
+
+    class _FakeContext:
+        def __init__(self, plats):
+            self._plats = plats
+
+        def get_platform_inst(self, pid):
+            return self._plats.get(pid)
+
+    ctx = _FakeContext({"aiocqhttp": _FakePlatform("aiocqhttp"), "tg": _FakePlatform("telegram")})
+    assert is_aiocqhttp_target(ctx, "aiocqhttp:group:111") is True
+    assert is_aiocqhttp_target(ctx, "telegram:chat:999") is False
+    assert is_aiocqhttp_target(ctx, "nope:private:1") is False
+    assert is_aiocqhttp_target(None, "aiocqhttp:group:111") is False

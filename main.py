@@ -26,11 +26,13 @@ from yamibo.subscriber import Subscriber
 from yamibo.utils import (
     FORUM_NAMES,
     AsyncLockRegistry,
+    SubPushPayload,
     build_push_chain,
     cfg_get,
     clamp_int,
     cooldown_ok,
     fmt_list,
+    is_aiocqhttp_target,
     normalize_deliver_mode,
     parse_tid_input,
     resolve_comic_workdir,
@@ -86,6 +88,8 @@ class AstrBotPlugin(Star):
                 self.client, self.subscriber,
                 lambda key, default=None: cfg_get(self.config, key, default),
                 self._push,
+                send_sub=self._push_sub,
+                forward_check=lambda umo: is_aiocqhttp_target(self.context, umo),
             )
             self.scheduler.start()
             logger.info("yamibo: 初始化完成")
@@ -110,10 +114,37 @@ class AstrBotPlugin(Star):
             logger.error(f"yamibo: 初始化任务异常: {exc!r}")
 
     async def _push(self, umo: str, text: str, images: list[str] | None = None) -> None:
-        """推送文本 + 图片（订阅/热帖共用）。发送失败向上抛，由调度层决定游标语义。"""
+        """推送文本 + 图片（订阅通知/热帖/告警共用）。发送失败向上抛，由调度层决定游标语义。"""
         import astrbot.api.message_components as Comp
 
         chain = MessageChain(chain=build_push_chain(text, images, Comp))
+        await self.context.send_message(umo, chain)
+
+    async def _push_sub(self, umo: str, payload: SubPushPayload) -> None:
+        """订阅更新内容推送：aiocqhttp 合并转发（每楼层一个节点）或整批直发。
+
+        payload 由 scheduler 组装；发送失败向上抛，由调度层决定游标语义。
+        合并转发节点 uin 取 "0"（协议端大多接受宽松值，suwayomi 同款做法）。
+        """
+        import astrbot.api.message_components as Comp
+
+        if payload.mode == "forward":
+            nodes = [
+                Comp.Node(
+                    uin="0",
+                    name=item.name,
+                    content=[
+                        Comp.Plain(text=item.text),
+                        *[Comp.Image.fromURL(u) for u in item.image_urls],
+                    ],
+                )
+                for item in payload.items
+            ]
+            chain = MessageChain(chain=[Comp.Nodes(nodes=nodes)])
+        else:
+            text = "\n\n".join(item.text for item in payload.items)
+            images = [u for item in payload.items for u in item.image_urls]
+            chain = MessageChain(chain=build_push_chain(text, images, Comp))
         await self.context.send_message(umo, chain)
 
     # ---- 指令：签到（管理员） ----

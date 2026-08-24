@@ -9,9 +9,8 @@ from pathlib import Path
 
 import img2pdf
 
-from yamibo.utils import fmt_comic_header
+from yamibo.utils import FORWARD_CHUNK, chunk_list, fmt_comic_header
 
-FORWARD_CHUNK = 100
 SAFE_NAME_RE = re.compile(r'[\\/:*?"<>|]')
 
 
@@ -26,10 +25,6 @@ class DownloadResult:
 
 def ensure_safe_filename(name: str) -> str:
     return SAFE_NAME_RE.sub("", name).strip() or "untitled"
-
-
-def chunk_list(items: list, size: int) -> list[list]:
-    return [items[i : i + size] for i in range(0, len(items), size)]
 
 
 def build_forward_chunks(files: list[Path], *, reserve: int = 0) -> list[list[Path]]:

@@ -2,6 +2,7 @@ import asyncio
 import re
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,13 @@ from yamibo.parser import TZ
 TID_URL_RE = re.compile(r"(?:thread-(\d+)-|tid=(\d+))")
 TIME_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
 DEFAULT_LIMIT = 15
+
+FORWARD_CHUNK = 100  # 合并转发单批节点数上限；订阅与漫画共用
+PLAIN_BATCH_BUDGET = 8000  # 订阅直发单条消息字符预算：合并超出则按楼拆批（防平台长度限制导致必然失败）
+
+
+def chunk_list(items: list, size: int) -> list[list]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
 
 # fid -> 显示名；查找支持繁体/简体/常见简称
 FORUM_NAMES: dict[str, str] = {
@@ -143,6 +151,112 @@ def fmt_comic_header(title: str, tid_num: int) -> str:
     """漫画合并转发合集首条消息：标题 + 原帖链接。"""
     head = (title or "").strip() or f"帖子 {tid_num}"
     return f"【{head}】\n原帖：https://bbs.yamibo.com/thread-{tid_num}-1-1.html"
+
+
+# ---- 订阅更新推送 ----
+
+@dataclass
+class SubPushItem:
+    """订阅更新的单个楼层：一次合并转发中的一条消息节点（_check_one 组装，发方转换 Comp）。"""
+
+    floor: int
+    name: str  # 节点昵称（楼主名）
+    text: str  # 节点文本（标题/正文/链接）
+    image_urls: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SubPushPayload:
+    """订阅更新的一次推送：某个订阅的若干楼层（一条合并转发或一条合并直发消息）。"""
+
+    mode: str  # "forward"（合并转发，每楼层一个节点）| "plain"（整批直发合并文本+图片）
+    items: list[SubPushItem] = field(default_factory=list)
+
+
+def fmt_sub_floor_text(title: str, op_name: str, floor: int, body: str, url: str) -> str:
+    """订阅楼层节点文本：标题 / 正文 / 帖子链接。正文为空占位（无文本）。"""
+    paragraph = str(body) if str(body).strip() else "(无文本)"
+    return f"【{title}】{op_name} 更新 L{floor}\n{paragraph}\n{url}"
+
+
+def fmt_floor_range(floors) -> str:
+    """楼层范围展示：单个 L10；连续区间 L10-L12；非连续用、分隔（L10、L15）。"""
+    fs = sorted({int(f) for f in floors})
+    if not fs:
+        return ""
+    parts: list[str] = []
+    start = prev = fs[0]
+    for x in fs[1:]:
+        if x == prev + 1:
+            prev = x
+            continue
+        parts.append(f"L{start}" if start == prev else f"L{start}-L{prev}")
+        start = prev = x
+    parts.append(f"L{start}" if start == prev else f"L{start}-L{prev}")
+    return "、".join(parts)
+
+
+def fmt_sub_notice(title: str, op_name: str, floors) -> str:
+    """订阅更新通知：标题 + 楼主 + 更新楼层范围（无链接，纯短文案）。"""
+    return f"【{title}】{op_name} 更新了 {fmt_floor_range(floors)}"
+
+
+def build_sub_payload(
+    title: str, op_name: str, tid: int, floors: list, *, mode: str, text_max: int, image_max: int
+) -> SubPushPayload:
+    """将新楼层列表组装为订阅推送载荷（按 mode 截断正文/图片）。floors: list[PostFloor]。"""
+    url = f"https://bbs.yamibo.com/thread-{tid}-1-1.html"
+    items = [
+        SubPushItem(
+            floor=f.floor,
+            name=op_name,
+            text=fmt_sub_floor_text(title, op_name, f.floor, f.text[:text_max], url),
+            image_urls=f.images[:image_max],
+        )
+        for f in floors
+    ]
+    return SubPushPayload(mode=mode, items=items)
+
+
+def split_plain_batches(
+    title: str, op_name: str, tid: int, floors: list, *, text_max: int, budget: int = PLAIN_BATCH_BUDGET
+) -> list[list]:
+    """plain 直发模式按合并文本字符预算拆分楼层批次（每批一条消息）。
+
+    floor 的成本按 text_max 截断后的文本估算；单层超过预算时自成一批，
+    保证不会发出必然超过平台消息长度限制的组合。
+    """
+    url = f"https://bbs.yamibo.com/thread-{tid}-1-1.html"
+    batches: list[list] = []
+    cur: list = []
+    cur_len = 0
+    for f in floors:
+        cost = len(fmt_sub_floor_text(title, op_name, f.floor, f.text[:text_max], url)) + 2
+        if cur and cur_len + cost > budget:
+            batches.append(cur)
+            cur = []
+            cur_len = 0
+        cur.append(f)
+        cur_len += cost
+    if cur:
+        batches.append(cur)
+    return batches
+
+
+def is_aiocqhttp_target(context, umo: str) -> bool:
+    """umo 目标是否运行在支持合并转发的平台（aiocqhttp）。
+
+    经 context.get_platform_inst 匹配真实平台实例（平台 id 与适配器名可不同），
+    拿不到实例（未知平台/context 为 None）一律视为不支持。
+    """
+    pid = str(umo).split(":", 1)[0]
+    if not pid or context is None:
+        return False
+    try:
+        platform = context.get_platform_inst(pid)
+    except Exception:
+        return False
+    return platform is not None and platform.meta().name == "aiocqhttp"
 
 
 def parse_tid_input(raw: str) -> int | None:

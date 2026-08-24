@@ -50,7 +50,7 @@ SUB_AUTHOR_TWO_FLOORS = """
 
 @pytest.fixture
 def make_sched():
-    def build(**overrides):
+    def build(forward_check=None, **overrides):
         cfg = {
             "sign": {"enable": True, "time": "10:00"},
             "hot_push": {
@@ -129,15 +129,22 @@ def make_sched():
 
         class Recorder:
             def __init__(self):
-                self.sent = []
+                self.sent = []      # (umo, text, images) —— 热帖/通知直发
+                self.planned = []   # (umo, SubPushPayload) —— 订阅内容
 
             async def send(self, umo, text, images=None):
                 self.sent.append((umo, text, images or []))
 
+            async def sub_send(self, umo, payload):
+                self.planned.append((umo, payload))
+
         client = FakeClient()
         sub = FakeSub()
         rec = Recorder()
-        s = Scheduler(client, sub, lambda k, d=None: cfg_get(cfg, k, d), rec.send)
+        s = Scheduler(
+            client, sub, lambda k, d=None: cfg_get(cfg, k, d), rec.send,
+            send_sub=rec.sub_send, forward_check=forward_check,
+        )
         return s, client, sub, rec
 
     return build
@@ -449,68 +456,165 @@ def _sub(tid: int = 574233, last_floor: int = 3, subscribers=None) -> Subscripti
     )
 
 
-async def test_sub_check_sends_text_and_images(make_sched):
-    s, client, sub, rec = make_sched()
+def _floors_html(start: int, stop: int, *, text: str | None = None) -> str:
+    """程序化生成 start..stop 的楼主楼层 HTML。text 为每楼层正文（None 用默认短文本）。"""
+    parts = []
+    for floor in range(start, stop + 1):
+        pid = 3000 + floor
+        body = text or f"楼主第 {floor} 楼"
+        parts.append(
+            f'<div id="post_{pid}"><table><tr>'
+            f'<td><div id="favatar{pid}" class="pls"><div class="authi">'
+            f'<a href="space-uid-7.html" target="_blank">op</a></div></div></td>'
+            f'<td><div id="postnum{pid}"><em>{floor}</em></div>'
+            f'<div id="authorposton{pid}"><span>2026-8-9 10:00</span></div>'
+            f'<div id="postmessage_{pid}" class="t_f">{body}</div></td></tr></table></div>'
+        )
+    return f'<div id="postlist">{"".join(parts)}</div>'
+
+
+async def test_sub_check_forward_sends_nodes_and_notice(make_sched):
+    """aiocqhttp 平台：合并转发（每楼层一个节点）+ 一条通知，通知失败不阻塞游标。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
     await s._check_one(_sub())
-    assert len(rec.sent) == 1
-    umo, text, images = rec.sent[0]
+    assert len(rec.planned) == 1
+    umo, payload = rec.planned[0]
     assert umo == UMO
-    assert "【T】op 更新 L12" in text
-    assert "楼主新楼层" in text
-    assert "https://bbs.yamibo.com/thread-574233-1-1.html" in text
-    assert "含图片 1 张" in text
-    assert images == ["https://bbs.yamibo.com/data/attachment/forum/202608/09/a.jpg"]
+    assert payload.mode == "forward"
+    assert len(payload.items) == 1
+    it = payload.items[0]
+    assert it.name == "op"
+    assert "【T】op 更新 L12" in it.text
+    assert "楼主新楼层" in it.text
+    assert "https://bbs.yamibo.com/thread-574233-1-1.html" in it.text
+    assert it.image_urls == ["https://bbs.yamibo.com/data/attachment/forum/202608/09/a.jpg"]
+    # 通知：直发通道，无链接短文案
+    assert rec.sent == [(UMO, "【T】op 更新了 L12", [])]
     assert sub.baseline_updates == [(574233, 12, 2002)]
     assert sub.resets == [574233]
+
+
+async def test_sub_check_plain_fallback_merges_and_notice(make_sched):
+    """非转发平台：全部新楼层合并为一条直发消息（plain payload）+ 通知。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: False)
+    client.sub_author_html = SUB_AUTHOR_TWO_FLOORS
+    await s._check_one(_sub(last_floor=11))
+    assert len(rec.planned) == 1
+    umo, payload = rec.planned[0]
+    assert umo == UMO
+    assert payload.mode == "plain"
+    assert len(payload.items) == 2  # 两个楼层合并一条
+    assert payload.items[0].floor == 12
+    assert payload.items[1].floor == 13
+    assert rec.sent == [(UMO, "【T】op 更新了 L12-L13", [])]
+    assert sub.baseline_updates == [(574233, 13, 2003)]
 
 
 async def test_sub_check_image_max_caps_sent_images(make_sched):
     s, client, sub, rec = make_sched(**{"subscription.image_max": 1})
     client.sub_author_html = SUB_AUTHOR_TWO_IMAGES
     await s._check_one(_sub())
-    assert len(rec.sent) == 1
-    umo, text, images = rec.sent[0]
-    assert len(images) == 1
-    assert "含图片 1 张" in text
+    assert len(rec.planned) == 1
+    assert len(rec.planned[0][1].items[0].image_urls) == 1
 
 
 async def test_sub_check_no_new_floors_no_send(make_sched):
     s, client, sub, rec = make_sched()
     await s._check_one(_sub(last_floor=12))
+    assert rec.planned == []
     assert rec.sent == []
     assert sub.resets == [574233]
     assert sub.baseline_updates == []
 
 
 async def test_sub_check_all_send_failures_keep_baseline(make_sched, caplog):
-    s, client, sub, rec = make_sched()
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
 
-    async def bad_send(umo, text, images=None):
+    async def bad_sub_send(umo, payload):
         raise RuntimeError("boom")
 
-    s._send = bad_send
+    s._send_sub = bad_sub_send
     with caplog.at_level("WARNING"):
         await s._check_one(_sub())
-    assert rec.sent == []
+    assert rec.planned == []
+    assert rec.sent == []  # 内容全部失败 → 不发通知
     assert sub.baseline_updates == []
     assert sub.resets == []
     assert "boom" in caplog.text
 
 
 async def test_sub_check_partial_delivery_advances_baseline(make_sched):
-    s, client, sub, rec = make_sched()
+    """多会话：任一会话送达即推进游标；通知只发给送达成功的会话。"""
+    def fc(umo):
+        return umo == UMO
 
-    async def bad_send(umo, text, images=None):
+    s, client, sub, rec = make_sched(forward_check=fc)
+    sub_model = _sub(subscribers=[UMO, "telegram:chat:999"])
+
+    async def flaky_sub_send(umo, payload):
         if umo == "telegram:chat:999":
             raise RuntimeError("boom")
-        await rec.send(umo, text, images)
+        await rec.sub_send(umo, payload)
 
-    s._send = bad_send
-    sub_model = _sub(subscribers=[UMO, "telegram:chat:999"])
+    s._send_sub = flaky_sub_send
     await s._check_one(sub_model)
-    assert len(rec.sent) == 1  # 一个会话送达即算送达
+    assert len(rec.planned) == 1
+    assert rec.planned[0][1].mode == "forward"
+    # 通知只发给内容送达成功的会话（避免对失败会话谎报）
+    assert rec.sent == [(UMO, "【T】op 更新了 L12", [])]
     assert sub.baseline_updates == [(574233, 12, 2002)]
     assert sub.resets == [574233]
+
+
+async def test_sub_check_plain_budget_rebatches_long_floors(make_sched):
+    """plain 模式合并文本超字符预算：按预算拆批发送，全部子批成功才推进并通知。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: False)
+    client.sub_author_html = _floors_html(12, 15, text="x" * 2000)
+    await s._check_one(_sub(last_floor=11))
+    # 每层约 2KB，3 层合并约 6.1KB（预算 8000）内，第 4 层开新批
+    assert [p.items[0].floor for _, p in rec.planned] == [12, 15]
+    assert len(rec.planned[0][1].items) == 3
+    assert len(rec.planned[1][1].items) == 1
+    assert all(p.mode == "plain" for _, p in rec.planned)
+    assert rec.sent == [(UMO, "【T】op 更新了 L12-L15", [])]
+    assert sub.baseline_updates == [(574233, 15, 3015)]
+
+
+async def test_scheduler_requires_send_sub():
+    """send_sub 未注入时构造直接失败（订阅发送静默失效是不能接受的配置错误）。"""
+
+    class Fake:
+        pass
+
+    async def send(umo, text, images=None):
+        pass
+
+    with pytest.raises(TypeError):
+        Scheduler(Fake(), Fake(), lambda k, d=None: None, send)
+
+
+async def test_sub_check_batch_success_advances_to_batch_end(make_sched):
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
+    client.sub_author_html = SUB_AUTHOR_TWO_FLOORS
+    await s._check_one(_sub(last_floor=11))
+    # 同批两楼层 → 一次发送，游标推进到批末楼层（13）
+    assert len(rec.planned) == 1
+    assert sub.baseline_updates == [(574233, 13, 2003)]
+
+
+async def test_sub_check_batch_failure_keeps_baseline(make_sched):
+    """批整体失败：不推进游标、不发通知，下轮重试整批。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
+    client.sub_author_html = SUB_AUTHOR_TWO_FLOORS
+
+    async def bad_sub_send(umo, payload):
+        raise RuntimeError("boom")
+
+    s._send_sub = bad_sub_send
+    await s._check_one(_sub(last_floor=11))
+    assert sub.baseline_updates == []
+    assert rec.sent == []
+    assert sub.resets == []
 
 
 async def test_maybe_check_subs_continue_after_auth_fail(make_sched):
@@ -528,42 +632,45 @@ async def test_maybe_check_subs_continue_after_auth_fail(make_sched):
     assert checked == [1, 2]  # 第 1 个订阅 cookie 失效不再中断本轮其余订阅
 
 
-async def test_sub_check_baseline_advances_to_delivered_floor(make_sched):
-    """低楼层全失败、高楼层送达：基线只推进到送达楼层，未送达楼层下轮重试。"""
-    s, client, sub, rec = make_sched()
-    client.sub_author_html = SUB_AUTHOR_TWO_FLOORS
-
-    async def flaky_send(umo, text, images=None):
-        if "L12" in text:
-            raise RuntimeError("boom")
-        await rec.send(umo, text, images)
-
-    s._send = flaky_send
+async def test_sub_check_batches_over_chunk_all_ok(make_sched):
+    """101 楼层 → 两批（100 + 1），每批一条转发，通知只在全部批成功后发一次。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
+    client.sub_author_html = _floors_html(12, 112)
     await s._check_one(_sub(last_floor=11))
-    assert sub.baseline_updates == [(574233, 13, 2003)]
+    assert len(rec.planned) == 2
+    assert len(rec.planned[0][1].items) == 100
+    assert rec.planned[0][1].items[0].floor == 12
+    assert len(rec.planned[1][1].items) == 1
+    assert rec.planned[1][1].items[0].floor == 112
+    assert rec.sent == [(UMO, "【T】op 更新了 L12-L112", [])]
+    assert sub.baseline_updates == [(574233, 112, 3112)]
 
 
-async def test_sub_check_baseline_stops_at_failed_high_floor(make_sched):
-    """高楼层全失败、低楼层送达：基线推进到低楼层，高楼层下轮重试。"""
-    s, client, sub, rec = make_sched()
-    client.sub_author_html = SUB_AUTHOR_TWO_FLOORS
+async def test_sub_check_middle_batch_fail_stops_and_no_notice(make_sched):
+    """第二批全失败：只推进到第一批末楼层，不发通知，下轮重试剩余批次。"""
+    s, client, sub, rec = make_sched(forward_check=lambda u: True)
+    client.sub_author_html = _floors_html(12, 112)
 
-    async def flaky_send(umo, text, images=None):
-        if "L13" in text:
+    async def flaky_sub_send(umo, payload):
+        if payload.items[0].floor == 112:
             raise RuntimeError("boom")
-        await rec.send(umo, text, images)
+        await rec.sub_send(umo, payload)
 
-    s._send = flaky_send
+    s._send_sub = flaky_sub_send
     await s._check_one(_sub(last_floor=11))
-    assert sub.baseline_updates == [(574233, 12, 2002)]
+    assert len(rec.planned) == 1  # 只记录第一批
+    assert rec.sent == []  # 未全部成功 → 不通知
+    assert sub.baseline_updates == [(574233, 111, 3111)]
+    assert sub.resets == [574233]
 
 
 async def test_sub_check_clamps_bad_config(make_sched):
     """text_max_len/image_max 配置损坏时不崩溃，按默认/边界执行。"""
     s, client, sub, rec = make_sched(**{"subscription.text_max_len": "oops", "subscription.image_max": -5})
     await s._check_one(_sub())
-    assert len(rec.sent) == 1
-    assert rec.sent[0][2] == []  # image_max 钳制到 0 → 不发送图片
+    assert len(rec.planned) == 1
+    assert rec.planned[0][1].items[0].image_urls == []  # image_max 钳制到 0 → 不发送图片
+    assert "楼主新楼层" in rec.planned[0][1].items[0].text
 
 
 # ---- 调度等待 ----

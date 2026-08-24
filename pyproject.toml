@@ -1,6 +1,6 @@
 [project]
 name = "astrbot_plugin_yamibo"
-version = "0.2.3"
+version = "0.2.4"
 requires-python = ">=3.10"
 dependencies = ["aiohttp>=3.9", "beautifulsoup4>=4.12", "quickjs>=1.19", "img2pdf>=0.5"]
 
