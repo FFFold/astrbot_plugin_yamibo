@@ -109,6 +109,90 @@
       }
     }
   },
+  "auto_parse": {
+    "description": "群聊链接自动解析",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用群聊链接自动解析",
+        "hint": "群内发送百合会帖子完整链接时自动预览，无需 @ 或命令；关闭后仍可手动执行 /yamibo 帖子、/yamibo 漫画",
+        "type": "bool",
+        "default": false
+      },
+      "bypass_reply_quote": {
+        "description": "跳过引用回复",
+        "hint": "直接发送自动预览，跳过 AstrBot 的回复处理（含引用、@ 和回复前缀）；关闭后跟随 AstrBot 的全局设置",
+        "type": "bool",
+        "default": false
+      },
+      "group_whitelist": {
+        "description": "群聊白名单（可选）",
+        "hint": "填写允许自动解析的群号，每项一个；留空表示所有群，不影响手动命令",
+        "type": "list",
+        "default": []
+      },
+      "cooldown_sec": {
+        "description": "同群自动解析冷却（秒）",
+        "hint": "同一群两次自动解析之间的最小间隔，0~86400，0 表示无冷却；冷却期间静默跳过，与手动命令冷却独立",
+        "type": "int",
+        "default": 60
+      },
+      "max_links": {
+        "description": "单条消息最多解析帖子数",
+        "hint": "同条消息按出现顺序解析前 N 个帖子，1~5，重复帖子只解析一次；多个链接共用一次冷却",
+        "type": "int",
+        "default": 1
+      },
+      "reaction": {
+        "description": "解析表情回应（QQ）",
+        "type": "object",
+        "items": {
+          "enable": {
+            "description": "启用解析表情回应",
+            "hint": "解析出预览后，给群里含链接的原消息添加一次表情回应；仅支持 aiocqhttp，需协议端支持，失败不影响预览",
+            "type": "bool",
+            "default": false
+          },
+          "emoji_id": {
+            "description": "回应表情 ID",
+            "hint": "QQ 表情 ID，默认 128077（点赞）；可填写协议端支持的其他表情 ID",
+            "type": "string",
+            "default": "128077"
+          }
+        }
+      },
+      "comic": {
+        "description": "漫画链接预览",
+        "type": "object",
+        "items": {
+          "enable": {
+            "description": "启用漫画帖子预览",
+            "hint": "发送标题和主楼第一张可见图片，无图时只发标题；关闭后跳过漫画帖子",
+            "type": "bool",
+            "default": true
+          }
+        }
+      },
+      "novel": {
+        "description": "小说及普通帖子预览",
+        "type": "object",
+        "items": {
+          "enable": {
+            "description": "启用小说及普通帖子预览",
+            "hint": "非漫画版块或无法识别版块的帖子发送标题和主楼摘要，不发图片；关闭后跳过这类帖子",
+            "type": "bool",
+            "default": true
+          },
+          "text_max_len": {
+            "description": "正文预览字数",
+            "hint": "小说及普通帖子最多预览的正文字数，0~500，默认 50；0 表示只发标题，超出时添加省略号，隐藏内容始终跳过",
+            "type": "int",
+            "default": 50
+          }
+        }
+      }
+    }
+  },
   "subscription": {
     "description": "帖子订阅",
     "type": "object",

@@ -42,6 +42,7 @@
 | 🔔 **帖子订阅** | 按「只看楼主」跟踪，楼主新楼层（文本+图片）以合并转发整体推送 + 一条更新通知；非转发平台自动回退单条发送 |
 | 🔍 **浏览与搜索** | 版块帖子列表（热度/最新排序）、全站搜索、帖子内容预览 |
 | 💬 **未读提醒** | 查询账号未读消息数量（管理员） |
+| 🔗 **群链接识别** | 独立轻量预览：漫画标题 + 首图，小说及其他帖子标题 + 前 50 字 |
 
 ## 🚀 快速开始
 
@@ -82,6 +83,11 @@ pip install -r requirements.txt
 | 论坛登录认证 | user_agent / proxy / manual_nox_token | 内置 UA / 空 / 空 | 可选：自定义 UA、代理，以及 WAF token 手动兜底 |
 | 签到 | enable / time | `true` / `10:00` | 自动签到开关与时间（HH:MM，东八区） |
 | 热帖推送 | enable / count / daily.enable / daily.time / incremental.enable / incremental.interval_min | `true` / `10` / `true` / `20:00` / `true` / `60` | 全量日报（每天定时推完整今日热度榜）+ 增量雷达（榜单刷新后推新进榜帖，自动对齐约 5h 的榜单缓存；interval_min 仅作解析失败兜底） |
+| 群聊链接自动解析 | enable / bypass_reply_quote / group_whitelist | `false` / `false` / `[]` | 自动解析总开关、跳过 AstrBot 回复处理、群号白名单（留空为所有群）；与手动命令设置独立 |
+| 群聊链接自动解析 | cooldown_sec / max_links | `60` / `1` | 同群冷却（秒，0 关闭）、单条消息最多解析帖子数（1~5，重复帖子去重） |
+| 漫画链接预览 | auto_parse.comic.enable | `true` | 自动预览漫画标题 + 主楼首图，无图时只发标题 |
+| 小说及普通帖子预览 | auto_parse.novel.enable / auto_parse.novel.text_max_len | `true` / `50` | 自动预览标题 + 主楼摘要，字数范围 0~500，0 为只发标题 |
+| 解析表情回应（QQ） | auto_parse.reaction.enable / auto_parse.reaction.emoji_id | `false` / `128077` | 解析出预览后给原消息添加表情回应；仅 aiocqhttp 且需协议端支持，失败不影响预览 |
 | 帖子订阅 | check_interval_min / text_max_len / image_max | `30` / `2000` / `50` | 订阅轮询间隔、文本截断、单楼层图片上限（图片随推送真实发送） |
 | 漫画打包 | deliver_mode / max_pages / max_file_size_mb / download_concurrency / cleanup_delay_min / workdir | `auto` / `300` / `45` / `4` / `10` / `""` | 发送方式（auto/pdf/fwd/zip）、页数与体积上限、并发、临时文件延迟清理（分钟）、临时目录 |
 | 频率与安全 | comic_cooldown_sec / search_cooldown_sec / skip_hidden_content / notify_auth_fail | `60` / `30` / `true` / `false` | 冷却与隐私开关 |
@@ -128,6 +134,30 @@ pip install -r requirements.txt
 /yamibo 漫画 574233
 /yamibo 订阅 574597
 ```
+
+### 群聊链接自动解析（可选）
+
+重载插件，在配置面板「群聊链接自动解析」中开启 `auto_parse.enable`（默认关闭，原有命令照常使用）。
+群内发送完整文本链接即可触发，无需 @ 机器人或输入命令：
+
+```text
+推荐这篇：https://bbs.yamibo.com/thread-574233-1-1.html
+https://bbs.yamibo.com/forum.php?mod=viewthread&tid=574233
+```
+
+- 根据导航栏中真实版块链接（含父版块）的名称识别漫画区，支持「漫画／漫畫」；帖子标题和正文中的「漫画」不参与判断。
+- 漫画：**标题 + 主楼第一张可见图片**，合为一条普通消息；无图时只发标题。`auto_parse.comic.enable` 可单独关闭漫画预览（默认开启）。
+- 小说、其他版块或无法识别版块的帖子：**标题 + 主楼前 50 字**，不发图片。`auto_parse.novel.enable` 可单独关闭（默认开启）；`auto_parse.novel.text_max_len` 默认 50，可设 0~500，0 为只发标题。正文先合并多余空白，超长时添加省略号，空正文只发标题。
+- 自动预览始终跳过隐藏内容及隐藏附件，只取主楼，不发送其他人的回复，不创建 PDF/ZIP、合并转发或订阅。使用 `auto_parse` 独立配置，与手动预览/漫画打包设置互不影响。
+- `auto_parse.bypass_reply_quote` 默认关闭，跟随 AstrBot 的全局回复设置；开启后直接发送自动预览，跳过 AstrBot 的回复处理，因此引用、@、回复前缀及发送前后的结果钩子也不会应用。
+- `auto_parse.group_whitelist` 为群号列表，默认留空（所有群均可触发）；填写后仅白名单内的群自动解析，不影响手动命令。
+- `auto_parse.reaction.enable` 默认关闭；开启后，对含链接的原消息添加一次 QQ 表情回应。`auto_parse.reaction.emoji_id` 默认 `128077`（点赞），可改为协议端支持的表情 ID。仅支持 aiocqhttp 且需协议端支持 `set_msg_emoji_like`；解析失败、登录失效或帖子不可见时不回应，回应失败不影响预览。
+- `auto_parse.cooldown_sec` 默认 60 秒，范围 0~86400（0 关闭冷却），同一平台实例的同一群共享冷却；冷却期间静默跳过。冷却从开始尝试时计算，失败也会占用冷却。
+- `auto_parse.max_links` 默认 1，范围 1~5；同条消息中相同 tid 去重，按出现顺序尝试前 N 个，不受手动漫画命令冷却限制。关闭某类预览时，该类帖子静默跳过。
+- 仅识别 `http(s)://bbs.yamibo.com` 的帖子链接，支持静态链接、`forum.php?mod=viewthread&tid=...`、附加分页参数及 HTML 转义的 `&amp;`。
+- 私聊、机器人自身消息和已匹配的命令不触发自动解析。纯数字 tid、QQ JSON 分享卡片及合并转发里的嵌套消息暂不识别。
+
+更新后重载插件以生成新增配置。本地验证：开启自动解析，分别发送小说、漫画链接，确认只出现短摘要或首图；将 `max_links` 设为 2，发送两个不同漫画链接确认各有一条预览；核对手动 `/yamibo 帖子` 和 `/yamibo 漫画` 输出仍与以前一致；关闭开关确认只保留命令触发。
 
 ## 📌 说明与限制
 
