@@ -131,36 +131,6 @@
         "type": "list",
         "default": []
       },
-      "cooldown_sec": {
-        "description": "同群自动解析冷却（秒）",
-        "hint": "同一群两次自动解析之间的最小间隔，0~86400，0 表示无冷却；冷却期间静默跳过，与手动命令冷却独立",
-        "type": "int",
-        "default": 60
-      },
-      "max_links": {
-        "description": "单条消息最多解析帖子数",
-        "hint": "同条消息按出现顺序解析前 N 个帖子，1~5，重复帖子只解析一次；多个链接共用一次冷却",
-        "type": "int",
-        "default": 1
-      },
-      "reaction": {
-        "description": "解析表情回应（QQ）",
-        "type": "object",
-        "items": {
-          "enable": {
-            "description": "启用解析表情回应",
-            "hint": "解析出预览后，给群里含链接的原消息添加一次表情回应；仅支持 aiocqhttp，需协议端支持，失败不影响预览",
-            "type": "bool",
-            "default": false
-          },
-          "emoji_id": {
-            "description": "回应表情 ID",
-            "hint": "QQ 表情 ID，默认 128077（点赞）；可填写协议端支持的其他表情 ID",
-            "type": "string",
-            "default": "128077"
-          }
-        }
-      },
       "comic": {
         "description": "漫画链接预览",
         "type": "object",

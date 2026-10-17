@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 import time
 from collections.abc import Iterable
@@ -16,6 +17,9 @@ from yamibo.parser import TZ, parse_thread
 TID_URL_RE = re.compile(r"(?:thread-(\d+)-|tid=(\d+))")
 TIME_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
 DEFAULT_LIMIT = 15
+AUTO_PARSE_COOLDOWN_SEC = 60
+
+logger = logging.getLogger("yamibo")
 
 FORWARD_CHUNK = 100  # 合并转发单批节点数上限；订阅与漫画共用
 PLAIN_BATCH_BUDGET = 8000  # 订阅直发单条消息字符预算：合并超出则按楼拆批（防平台长度限制导致必然失败）
@@ -328,7 +332,6 @@ class AutoLinkPreview:
 
     text: str
     images: list[str] = field(default_factory=list)
-    parsed: bool = True
 
 
 def build_auto_preview(html: str, tid: int, config: dict) -> AutoLinkPreview | None:
@@ -343,7 +346,8 @@ def build_auto_preview(html: str, tid: int, config: dict) -> AutoLinkPreview | N
         locked.decompose()
     thread = parse_thread(str(soup), tid, skip_hidden=True)
     if not thread.floors:
-        return AutoLinkPreview("帖子不可见或需要更高权限", parsed=False)
+        logger.warning("yamibo auto parse skipped: tid=%s, post unavailable", tid)
+        return None
     # Discuz 有时省略主楼编号（解析为 0），但不能把二楼当成主楼预览。
     first = next((floor for floor in thread.floors if floor.is_op), None)
     if first is None and thread.floors[0].floor == 0:
@@ -391,39 +395,21 @@ async def auto_parse_group_links(event, config, state: dict, client):
     tids = extract_yamibo_tids(event.get_message_str())
     # 群开启独立用户会话时，仍以平台实例 + 群号共享冷却。
     key = f"auto:{event.unified_msg_origin.split(':', 1)[0]}:{event.get_group_id()}"
-    seconds = clamp_int(cfg_get(config, "auto_parse.cooldown_sec", 60), 0, 86400, 60)
-    if not cooldown_ok(state, key, seconds):
+    if not cooldown_ok(state, key, AUTO_PARSE_COOLDOWN_SEC):
         return
-    limit = clamp_int(cfg_get(config, "auto_parse.max_links", 1), 1, 5, 1)
-    for tid in tids[:limit]:
+    # 固定只尝试消息中的第一个帖子，避免群聊刷屏。
+    tid = tids[0]
+    try:
         html = await client.get_text(f"/forum.php?mod=viewthread&tid={tid}")
         if not client.is_logged_in(html):
-            yield AutoLinkPreview("登录 cookie 已失效，请更新 auth/saltkey 后重试", parsed=False)
+            logger.warning("yamibo auto parse skipped: tid=%s, login expired", tid)
             return
         preview = build_auto_preview(html, tid, config)
-        if preview is not None:
-            yield preview
-
-
-async def react_to_auto_parse_message(event, config) -> bool:
-    """QQ 原消息表情回应；未开启或协议端不支持时不额外发送消息。"""
-    if not cfg_get(config, "auto_parse.reaction.enable", False):
-        return False
-    if event.get_platform_name() != "aiocqhttp":
-        return False
-    bot = getattr(event, "bot", None)
-    if not callable(getattr(bot, "call_action", None)):
-        return False
-    message_id = str(getattr(getattr(event, "message_obj", None), "message_id", "")).strip()
-    emoji_id = str(cfg_get(config, "auto_parse.reaction.emoji_id", "128077")).strip()
-    if not re.fullmatch(r"-?[0-9]+", message_id) or not re.fullmatch(r"[0-9]+", emoji_id):
-        return False
-    params = {"message_id": int(message_id), "emoji_id": emoji_id, "set": True}
-    raw = getattr(event.message_obj, "raw_message", None)
-    if isinstance(raw, dict) and raw.get("self_id"):
-        params["self_id"] = raw["self_id"]
-    await bot.call_action("set_msg_emoji_like", **params)
-    return True
+    except Exception as e:
+        logger.error("yamibo auto parse failed: tid=%s, error_type=%s", tid, type(e).__name__)
+        return
+    if preview is not None:
+        yield preview
 
 
 def cooldown_ok(state: dict, key: str, seconds: int, *, now: float | None = None) -> bool:

@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -9,7 +9,6 @@ from yamibo.utils import (
     build_auto_preview,
     extract_yamibo_tids,
     is_comic_thread,
-    react_to_auto_parse_message,
     should_auto_parse,
 )
 
@@ -140,14 +139,14 @@ async def test_fetches_once_and_limits_links():
     client.get_text.assert_awaited_once_with("/forum.php?mod=viewthread&tid=123")
 
 
-async def test_multiple_unique_comics_ignore_manual_cooldown():
+async def test_first_unique_comic_ignores_manual_cooldown_and_removed_settings():
     client = forum_client()
     client.get_text.side_effect = [page(comic=True, title="漫画一"), page(comic=True, title="漫画二")]
     config = {"auto_parse": {"enable": True, "max_links": 3}, "limits": {"comic_cooldown_sec": 9999}}
     state = {"comic:qq:GroupMessage:42": 10**20}
     ev = event(text=f"{URL} {URL} {URL.replace('123', '456')}")
-    assert await collect(ev, config, state, client) == [AutoLinkPreview("【漫画一】"), AutoLinkPreview("【漫画二】")]
-    assert client.get_text.await_count == 2
+    assert await collect(ev, config, state, client) == [AutoLinkPreview("【漫画一】")]
+    assert client.get_text.await_count == 1
     assert state["comic:qq:GroupMessage:42"] == 10**20
 
 
@@ -162,10 +161,33 @@ async def test_cooldown_shared_by_group_but_separate_platform_and_group():
     assert await collect(event(origin="qq2:GroupMessage:42"), config, state, client) == expected
 
 
-async def test_failure_propagates_to_entrypoint():
-    client = SimpleNamespace(get_text=AsyncMock(side_effect=RuntimeError("offline")))
-    with pytest.raises(RuntimeError, match="offline"):
-        await collect(event(), {"auto_parse": {"enable": True}}, {}, client)
+async def test_fixed_cooldown_ignores_removed_setting(monkeypatch):
+    clock = Mock(return_value=100)
+    monkeypatch.setattr("yamibo.utils.time.monotonic", clock)
+    client = forum_client()
+    config = {"auto_parse": {"enable": True, "cooldown_sec": 0}}
+    state = {}
+    assert await collect(event(), config, state, client)
+    clock.return_value = 159
+    assert await collect(event(), config, state, client) == []
+    clock.return_value = 160
+    assert await collect(event(), config, state, client)
+    assert client.get_text.await_count == 2
+
+
+@pytest.mark.parametrize("failure", ["fetch", "login_check", "parse"])
+async def test_failure_is_silent_and_logs_only_exception_type(failure, monkeypatch, caplog):
+    client = forum_client()
+    error = RuntimeError("private auth/saltkey values and raw page")
+    if failure == "fetch":
+        client.get_text.side_effect = error
+    elif failure == "login_check":
+        client.is_logged_in = Mock(side_effect=error)
+    else:
+        monkeypatch.setattr("yamibo.utils.build_auto_preview", Mock(side_effect=error))
+    assert await collect(event(), {"auto_parse": {"enable": True}}, {}, client) == []
+    assert "tid=123" in caplog.text and "RuntimeError" in caplog.text
+    assert str(error) not in caplog.text
 
 
 @pytest.mark.parametrize("nav", [
@@ -222,9 +244,10 @@ def test_empty_content_title_only(comic):
     assert build_auto_preview(page(comic=comic, body=" \n "), 123, {}) == AutoLinkPreview("【测试帖子】")
 
 
-def test_missing_title_fallback_and_inaccessible_page():
+def test_missing_title_fallback_and_inaccessible_page(caplog):
     assert build_auto_preview(page(title="", body=""), 123, {}) == AutoLinkPreview("【帖子 123】")
-    assert build_auto_preview("需要更高权限", 123, {}) == AutoLinkPreview("帖子不可见或需要更高权限", parsed=False)
+    assert build_auto_preview("需要更高权限", 123, {}) is None
+    assert "tid=123" in caplog.text and "post unavailable" in caplog.text
 
 
 @pytest.mark.parametrize("comic", [True, False])
@@ -268,13 +291,30 @@ async def test_independent_category_switch(comic, kind):
     assert await collect(event(), config, {}, forum_client(page(comic=not comic)))
 
 
-async def test_auth_failure_stops_batch():
+async def test_auth_failure_is_silent(caplog):
     client = forum_client()
     client.is_logged_in = lambda html: False
-    config = {"auto_parse": {"enable": True, "max_links": 2}}
+    config = {"auto_parse": {"enable": True}}
     ev = event(text=f"{URL} {URL.replace('123', '456')}")
-    assert await collect(ev, config, {}, client) == [AutoLinkPreview("登录 cookie 已失效，请更新 auth/saltkey 后重试", parsed=False)]
+    assert await collect(ev, config, {}, client) == []
     assert client.get_text.await_count == 1
+    assert "tid=123" in caplog.text and "login expired" in caplog.text
+
+
+async def test_inaccessible_post_is_silent(caplog):
+    assert await collect(event(), {"auto_parse": {"enable": True}}, {}, forum_client("需要更高权限")) == []
+    assert "post unavailable" in caplog.text
+
+
+async def test_failed_attempt_still_consumes_cooldown():
+    client = forum_client()
+    client.get_text.side_effect = RuntimeError("offline")
+    config = {"auto_parse": {"enable": True}}
+    state = {}
+    assert await collect(event(), config, state, client) == []
+    client.get_text.side_effect = None
+    assert await collect(event(), config, state, client) == []
+    client.get_text.assert_awaited_once()
 
 
 @pytest.mark.parametrize("title", ["小说", "普通帖子"])
@@ -282,48 +322,3 @@ async def test_zero_length_sends_title_only(title):
     config = {"auto_parse": {"enable": True, "novel": {"text_max_len": 0}}}
     client = forum_client(page(title=title, body='正文<img src="https://img.test/cover.jpg">'))
     assert await collect(event(), config, {}, client) == [AutoLinkPreview(f"【{title}】")]
-
-
-def reaction_event(*, platform="aiocqhttp", message_id="-123", raw=None):
-    ev = event()
-    ev.get_platform_name = lambda: platform
-    ev.message_obj = SimpleNamespace(message_id=message_id, raw_message=raw)
-    ev.bot = SimpleNamespace(call_action=AsyncMock())
-    return ev
-
-
-async def test_reaction_uses_original_message_and_configured_emoji():
-    ev = reaction_event(raw={"self_id": 1})
-    config = {"auto_parse": {"reaction": {"enable": True, "emoji_id": " 76 "}}}
-    assert await react_to_auto_parse_message(ev, config)
-    ev.bot.call_action.assert_awaited_once_with(
-        "set_msg_emoji_like", message_id=-123, emoji_id="76", set=True, self_id=1,
-    )
-
-
-async def test_reaction_default_emoji():
-    ev = reaction_event()
-    assert await react_to_auto_parse_message(ev, {"auto_parse": {"reaction": {"enable": True}}})
-    ev.bot.call_action.assert_awaited_once_with(
-        "set_msg_emoji_like", message_id=-123, emoji_id="128077", set=True,
-    )
-
-
-@pytest.mark.parametrize("platform,message_id,settings", [
-    ("aiocqhttp", "123", {}),
-    ("aiocqhttp", "123", {"enable": False}),
-    ("telegram", "123", {"enable": True}),
-    ("aiocqhttp", "", {"enable": True}),
-    ("aiocqhttp", "invalid", {"enable": True}),
-    ("aiocqhttp", "123", {"enable": True, "emoji_id": "invalid"}),
-])
-async def test_reaction_disabled_or_unsupported_is_silent(platform, message_id, settings):
-    ev = reaction_event(platform=platform, message_id=message_id)
-    assert not await react_to_auto_parse_message(ev, {"auto_parse": {"reaction": settings}})
-    ev.bot.call_action.assert_not_awaited()
-
-
-async def test_reaction_missing_protocol_client_is_silent():
-    ev = reaction_event()
-    ev.bot = None
-    assert not await react_to_auto_parse_message(ev, {"auto_parse": {"reaction": {"enable": True}}})

@@ -36,7 +36,6 @@ from yamibo.utils import (
     is_aiocqhttp_target,
     normalize_deliver_mode,
     parse_tid_input,
-    react_to_auto_parse_message,
     resolve_comic_workdir,
     resolve_fid,
     should_auto_parse,
@@ -249,7 +248,6 @@ class AstrBotPlugin(Star):
         """按自动解析独立配置发送标题、首图或短摘要。"""
         import astrbot.api.message_components as Comp
 
-        reacted = False
         try:
             async for preview in auto_parse_group_links(event, self.config, self._cool, self.client):
                 result = event.chain_result(build_push_chain(preview.text, preview.images, Comp))
@@ -257,19 +255,8 @@ class AstrBotPlugin(Star):
                     await event.send(result)
                 else:
                     yield result
-                if preview.parsed and not reacted:
-                    reacted = True
-                    try:
-                        await react_to_auto_parse_message(event, self.config)
-                    except Exception as e:
-                        logger.warning(f"yamibo auto parse reaction error: {e}")
         except Exception as e:
-            logger.error(f"yamibo auto parse error: {e}")
-            result = event.plain_result("百合会链接解析失败，请稍后重试。")
-            if cfg_get(self.config, "auto_parse.bypass_reply_quote", False):
-                await event.send(result)
-            else:
-                yield result
+            logger.error("yamibo auto parse error: error_type=%s", type(e).__name__)
 
     @yamibo.command("热帖")
     async def hot_now(self, event: AstrMessageEvent, n: int = 10):

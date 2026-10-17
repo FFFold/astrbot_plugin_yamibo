@@ -6,9 +6,9 @@ Run in an AstrBot Python environment, from any working directory:
 
 The optional root adds an AstrBot source checkout to the import path; its
 dependencies must already be installed. Run in a fresh process. No bot instance,
-forum requests, credentials, or real QQ messages are used. The forum client,
-event transport, and QQ action are stubs; message components and results come
-from AstrBot. Result hooks and protocol support need a running-bot check.
+forum requests, credentials, or real messages are used. The forum client and
+event transport are stubs; message components and results come from AstrBot.
+Result hooks and protocol support need a running-bot check.
 """
 
 import argparse
@@ -16,7 +16,7 @@ import asyncio
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 URL = "https://bbs.yamibo.com/thread-123-1-1.html"
@@ -45,7 +45,6 @@ def setup(
     runtime,
     *,
     bypass: bool = False,
-    reaction: bool = True,
     whitelist: list[str] | None = None,
     html: str = PAGE,
     authenticated: bool = True,
@@ -57,9 +56,6 @@ def setup(
             "enable": True,
             "bypass_reply_quote": bypass,
             "group_whitelist": whitelist or [],
-            "cooldown_sec": 0,
-            "max_links": 3,
-            "reaction": {"enable": reaction, "emoji_id": "128077"},
             "novel": {"enable": True, "text_max_len": text_limit},
             "comic": {"enable": True},
         }
@@ -71,9 +67,6 @@ def setup(
         get_message_str=lambda: " ".join(URL.replace("123", str(123 + i)) for i in range(links)),
         get_extra=lambda key, default=None: default,
         unified_msg_origin="qq:GroupMessage:42",
-        get_platform_name=lambda: "aiocqhttp",
-        message_obj=SimpleNamespace(message_id="-99", raw_message={"self_id": 1}),
-        bot=SimpleNamespace(call_action=AsyncMock()),
         send=AsyncMock(),
     )
     event.chain_result = lambda chain: runtime.AstrMessageEvent.chain_result(event, chain)
@@ -105,9 +98,6 @@ async def check_auto_parse(runtime) -> None:
         assert isinstance(result.chain[0], runtime.Plain) and result.chain[0].text == TITLE
         assert not any(isinstance(component, runtime.Reply) for component in result.chain)
         instance.client.get_text.assert_awaited_once_with("/forum.php?mod=viewthread&tid=123")
-        event.bot.call_action.assert_awaited_once_with(
-            "set_msg_emoji_like", message_id=-99, emoji_id="128077", set=True, self_id=1
-        )
         ok(f"{'direct send' if bypass else 'yield result'} branch and title-only preview")
 
     instance, event = setup(runtime, text_limit=5)
@@ -124,45 +114,49 @@ async def check_auto_parse(runtime) -> None:
     ok("comic preview contains only the first main-post image")
 
     instance, event = setup(runtime, links=3)
-    assert len(await consume(runtime, instance, event)) == 3
-    assert instance.client.get_text.await_count == 3
+    assert len(await consume(runtime, instance, event)) == 1
+    assert instance.client.get_text.await_count == 1
     event.send.assert_not_awaited()
-    assert event.bot.call_action.await_count == 1
-    ok("multiple previews attempt one reaction per original message")
+    ok("multiple links produce only one preview")
 
-    instance, event = setup(runtime, bypass=True, links=2)
-    event.bot.call_action.side_effect = RuntimeError("unsupported reaction")
-    assert await consume(runtime, instance, event) == []
-    assert event.send.await_count == 2 and event.bot.call_action.await_count == 1
-    assert all(call.args[0].chain[0].text == TITLE for call in event.send.await_args_list)
-    ok("an unsupported reaction does not interrupt subsequent previews")
+    for bypass in (False, True):
+        for options in ({"authenticated": False}, {"html": "Permission denied"}):
+            instance, event = setup(runtime, bypass=bypass, **options)
+            assert await consume(runtime, instance, event) == []
+            event.send.assert_not_awaited()
+    ok("login expiry and inaccessible posts are silent in both send branches")
 
-    for options in ({"authenticated": False}, {"html": "Permission denied"}, {"reaction": False}):
-        instance, event = setup(runtime, **options)
-        assert len(await consume(runtime, instance, event)) == 1
-        event.bot.call_action.assert_not_awaited()
-    ok("disabled reactions and unsuccessful parsing never react")
+    for kind in ("comic", "novel"):
+        instance, event = setup(runtime, html=COMIC_PAGE if kind == "comic" else PAGE)
+        instance.config["auto_parse"][kind]["enable"] = False
+        assert await consume(runtime, instance, event) == []
+        event.send.assert_not_awaited()
+    ok("disabled preview types never send")
 
     instance, event = setup(runtime, whitelist=["43"])
     assert await consume(runtime, instance, event) == []
     instance.client.get_text.assert_not_awaited()
     event.send.assert_not_awaited()
-    event.bot.call_action.assert_not_awaited()
     assert instance._cool == {}
-    ok("a group outside the whitelist has no fetch, send, reaction, or cooldown")
+    ok("a group outside the whitelist has no fetch, send, or cooldown")
 
-    instance, event = setup(runtime)
-    instance.client.get_text.side_effect = RuntimeError("offline")
-    assert len(await consume(runtime, instance, event)) == 1
-    event.bot.call_action.assert_not_awaited()
-    ok("forum errors become an error result without a reaction")
+    for bypass in (False, True):
+        instance, event = setup(runtime, bypass=bypass)
+        instance.client.get_text.side_effect = RuntimeError("offline")
+        assert await consume(runtime, instance, event) == []
+        event.send.assert_not_awaited()
+        for target in ("yamibo.utils.build_auto_preview", "main.auto_parse_group_links"):
+            instance, event = setup(runtime, bypass=bypass)
+            with patch(target, side_effect=RuntimeError("parse failed")):
+                assert await consume(runtime, instance, event) == []
+            event.send.assert_not_awaited()
+    ok("fetch, parser, and entrypoint exceptions are silent in both send branches")
 
     instance, event = setup(runtime, bypass=True)
-    event.send.side_effect = [RuntimeError("send failed"), None]
+    event.send.side_effect = RuntimeError("send failed")
     assert await consume(runtime, instance, event) == []
-    assert event.send.await_count == 2
-    event.bot.call_action.assert_not_awaited()
-    ok("a direct-send failure attempts the error result without a reaction")
+    assert event.send.await_count == 1
+    ok("a direct-send failure does not retry with an error message")
 
     gate = runtime.plugin._GroupLinkFilter()
     original_config = runtime.plugin._GroupLinkFilter.plugin_config
