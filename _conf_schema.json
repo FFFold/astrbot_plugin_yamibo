@@ -131,28 +131,10 @@
         "type": "list",
         "default": []
       },
-      "comic": {
-        "description": "漫画链接预览",
-        "type": "object",
-        "items": {
-          "enable": {
-            "description": "启用漫画帖子预览",
-            "hint": "发送标题和主楼第一张可见图片，无图时只发标题；关闭后跳过漫画帖子",
-            "type": "bool",
-            "default": true
-          }
-        }
-      },
       "novel": {
         "description": "小说及普通帖子预览",
         "type": "object",
         "items": {
-          "enable": {
-            "description": "启用小说及普通帖子预览",
-            "hint": "非漫画版块或无法识别版块的帖子发送标题和主楼摘要，不发图片；关闭后跳过这类帖子",
-            "type": "bool",
-            "default": true
-          },
           "text_max_len": {
             "description": "正文预览字数",
             "hint": "小说及普通帖子最多预览的正文字数，0~500，默认 50；0 表示只发标题，超出时添加省略号，隐藏内容始终跳过",

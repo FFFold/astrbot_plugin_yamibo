@@ -92,7 +92,6 @@ async def collect(ev, config, state, client):
     (event(text=f"yamibo 订阅 {URL}"), {"auto_parse": {"enable": True}}),
     (event(commands={"other.command": {"url": URL}}), {"auto_parse": {"enable": True}}),
     (event(text="普通聊天"), {"auto_parse": {"enable": True}}),
-    (event(), {"auto_parse": {"enable": True, "comic": {"enable": False}, "novel": {"enable": False}}}),
     (event(), {"auto_parse": {"enable": True, "group_whitelist": ["43"]}}),
     (event(), {"auto_parse": {"enable": True, "group_whitelist": "42"}}),
 ])
@@ -284,11 +283,18 @@ def test_main_floor_without_number():
     assert build_auto_preview(page(floor=""), 123, {}) == AutoLinkPreview("【测试帖子】\n小说正文")
 
 
-@pytest.mark.parametrize("comic,kind", [(True, "comic"), (False, "novel")])
-async def test_independent_category_switch(comic, kind):
-    config = {"auto_parse": {"enable": True, kind: {"enable": False}}}
-    assert await collect(event(), config, {}, forum_client(page(comic=comic))) == []
-    assert await collect(event(), config, {}, forum_client(page(comic=not comic)))
+@pytest.mark.parametrize("comic", [True, False])
+async def test_removed_category_switches_are_ignored(comic):
+    config = {"auto_parse": {
+        "enable": True, "comic": {"enable": False}, "novel": {"enable": False, "text_max_len": 2},
+    }}
+    html = page(comic=comic, body='小说正文<img src="https://img.test/first.jpg">')
+    expected = AutoLinkPreview("【测试帖子】", ["https://img.test/first.jpg"]) if comic else AutoLinkPreview("【测试帖子】\n小说…")
+    assert await collect(event(), config, {}, forum_client(html)) == [expected]
+    config["auto_parse"]["enable"] = False
+    client = forum_client(html)
+    assert await collect(event(), config, {}, client) == []
+    client.get_text.assert_not_awaited()
 
 
 async def test_auth_failure_is_silent(caplog):

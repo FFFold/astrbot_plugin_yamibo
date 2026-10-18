@@ -84,8 +84,7 @@ pip install -r requirements.txt
 | 签到 | enable / time | `true` / `10:00` | 自动签到开关与时间（HH:MM，东八区） |
 | 热帖推送 | enable / count / daily.enable / daily.time / incremental.enable / incremental.interval_min | `true` / `10` / `true` / `20:00` / `true` / `60` | 全量日报（每天定时推完整今日热度榜）+ 增量雷达（榜单刷新后推新进榜帖，自动对齐约 5h 的榜单缓存；interval_min 仅作解析失败兜底） |
 | 群聊链接自动解析 | enable / bypass_reply_quote / group_whitelist | `false` / `false` / `[]` | 自动解析总开关、跳过 AstrBot 回复处理、群号白名单（留空为所有群）；与手动命令设置独立 |
-| 漫画链接预览 | auto_parse.comic.enable | `true` | 自动预览漫画标题 + 主楼首图，无图时只发标题 |
-| 小说及普通帖子预览 | auto_parse.novel.enable / auto_parse.novel.text_max_len | `true` / `50` | 自动预览标题 + 主楼摘要，字数范围 0~500，0 为只发标题 |
+| 小说及普通帖子预览 | auto_parse.novel.text_max_len | `50` | 自动预览标题 + 主楼摘要，字数范围 0~500，0 为只发标题 |
 | 帖子订阅 | check_interval_min / text_max_len / image_max | `30` / `2000` / `50` | 订阅轮询间隔、文本截断、单楼层图片上限（图片随推送真实发送） |
 | 漫画打包 | deliver_mode / max_pages / max_file_size_mb / download_concurrency / cleanup_delay_min / workdir | `auto` / `300` / `45` / `4` / `10` / `""` | 发送方式（auto/pdf/fwd/zip）、页数与体积上限、并发、临时文件延迟清理（分钟）、临时目录 |
 | 频率与安全 | comic_cooldown_sec / search_cooldown_sec / skip_hidden_content / notify_auth_fail | `60` / `30` / `true` / `false` | 冷却与隐私开关 |
@@ -144,12 +143,13 @@ https://bbs.yamibo.com/forum.php?mod=viewthread&tid=574233
 ```
 
 - 根据导航栏中真实版块链接（含父版块）的名称识别漫画区，支持「漫画／漫畫」；帖子标题和正文中的「漫画」不参与判断。
-- 漫画：**标题 + 主楼第一张可见图片**，合为一条普通消息；无图时只发标题。`auto_parse.comic.enable` 可单独关闭漫画预览（默认开启）。
-- 小说、其他版块或无法识别版块的帖子：**标题 + 主楼前 50 字**，不发图片。`auto_parse.novel.enable` 可单独关闭（默认开启）；`auto_parse.novel.text_max_len` 默认 50，可设 0~500，0 为只发标题。正文先合并多余空白，超长时添加省略号，空正文只发标题。
+- 漫画：**标题 + 主楼第一张可见图片**，合为一条普通消息；无图时只发标题。
+- 小说、其他版块或无法识别版块的帖子：**标题 + 主楼前 50 字**，不发图片。`auto_parse.novel.text_max_len` 默认 50，可设 0~500，0 为只发标题。正文先合并多余空白，超长时添加省略号，空正文只发标题。
+- 自动解析统一由 `auto_parse.enable` 控制，按帖子版块选择预览形式；旧配置中的漫画、小说分类开关不再生效。
 - 自动预览始终跳过隐藏内容及隐藏附件，只取主楼，不发送其他人的回复，不创建 PDF/ZIP、合并转发或订阅。使用 `auto_parse` 独立配置，与手动预览/漫画打包设置互不影响。
 - `auto_parse.bypass_reply_quote` 默认关闭，跟随 AstrBot 的全局回复设置；开启后直接发送自动预览，跳过 AstrBot 的回复处理，因此引用、@、回复前缀及发送前后的结果钩子也不会应用。
 - `auto_parse.group_whitelist` 为群号列表，默认留空（所有群均可触发）；填写后仅白名单内的群自动解析，不影响手动命令。
-- 同一平台实例的同一群固定冷却 60 秒，单条消息只尝试第一个帖子链接；冷却期间静默跳过，与手动命令冷却独立。冷却从开始尝试时计算，失败也会占用冷却；关闭对应类型预览时静默跳过，不继续尝试后续链接。
+- 同一平台实例的同一群固定冷却 60 秒，单条消息只尝试第一个帖子链接；冷却期间静默跳过，与手动命令冷却独立。冷却从开始尝试时计算，失败也会占用冷却。
 - 自动解析失败、登录失效或帖子不可见时保持静默，只记录日志，不向群里发送登录状态、权限或错误提示。
 - 仅识别 `http(s)://bbs.yamibo.com` 的帖子链接，支持静态链接、`forum.php?mod=viewthread&tid=...`、附加分页参数及 HTML 转义的 `&amp;`。
 - 私聊、机器人自身消息和已匹配的命令不触发自动解析。纯数字 tid、QQ JSON 分享卡片及合并转发里的嵌套消息暂不识别。

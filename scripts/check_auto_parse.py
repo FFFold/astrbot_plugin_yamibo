@@ -56,8 +56,7 @@ def setup(
             "enable": True,
             "bypass_reply_quote": bypass,
             "group_whitelist": whitelist or [],
-            "novel": {"enable": True, "text_max_len": text_limit},
-            "comic": {"enable": True},
+            "novel": {"text_max_len": text_limit},
         }
     }
     event = SimpleNamespace(
@@ -126,12 +125,24 @@ async def check_auto_parse(runtime) -> None:
             event.send.assert_not_awaited()
     ok("login expiry and inaccessible posts are silent in both send branches")
 
-    for kind in ("comic", "novel"):
-        instance, event = setup(runtime, html=COMIC_PAGE if kind == "comic" else PAGE)
-        instance.config["auto_parse"][kind]["enable"] = False
-        assert await consume(runtime, instance, event) == []
-        event.send.assert_not_awaited()
-    ok("disabled preview types never send")
+    for bypass in (False, True):
+        for comic in (False, True):
+            instance, event = setup(runtime, bypass=bypass, html=COMIC_PAGE if comic else PAGE, text_limit=5)
+            instance.config["auto_parse"]["comic"] = {"enable": False}
+            instance.config["auto_parse"]["novel"]["enable"] = False
+            results = await consume(runtime, instance, event)
+            assert len(results) == (0 if bypass else 1)
+            assert event.send.await_count == (1 if bypass else 0)
+            result = event.send.await_args.args[0] if bypass else results[0]
+            assert result.chain[0].text == (TITLE if comic else f"{TITLE}\nFirst\u2026")
+            assert len(result.chain) == (2 if comic else 1)
+            instance.config["auto_parse"]["enable"] = False
+            instance.client.get_text.reset_mock()
+            event.send.reset_mock()
+            assert await consume(runtime, instance, event) == []
+            instance.client.get_text.assert_not_awaited()
+            event.send.assert_not_awaited()
+    ok("removed category switches are ignored; the master switch controls both preview types")
 
     instance, event = setup(runtime, whitelist=["43"])
     assert await consume(runtime, instance, event) == []

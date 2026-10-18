@@ -337,9 +337,6 @@ class AutoLinkPreview:
 def build_auto_preview(html: str, tid: int, config: dict) -> AutoLinkPreview | None:
     """自动预览只读 auto_parse 配置；主楼隐藏内容始终跳过。"""
     comic = is_comic_thread(html)
-    kind = "comic" if comic else "novel"
-    if not cfg_get(config, f"auto_parse.{kind}.enable", True):
-        return None
     # 自动预览还排除正文外的隐藏附件，避免附件扫描重新带回受限图片。
     soup = BeautifulSoup(html, "html.parser")
     for locked in soup.select("#postlist .locked, #postlist blockquote[class*=lock]"):
@@ -374,8 +371,6 @@ def should_auto_parse(event, config) -> bool:
         return False
     groups = {str(group).strip() for group in whitelist if str(group).strip()}
     if groups and str(event.get_group_id()).strip() not in groups:
-        return False
-    if not any(cfg_get(config, f"auto_parse.{kind}.enable", True) for kind in ("comic", "novel")):
         return False
     if str(event.get_sender_id()) == str(event.get_self_id()):
         return False
