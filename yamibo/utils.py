@@ -1,17 +1,25 @@
 import asyncio
+import logging
 import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
+from html import unescape
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
-from yamibo.parser import TZ
+from bs4 import BeautifulSoup
+
+from yamibo.parser import TZ, parse_thread
 
 TID_URL_RE = re.compile(r"(?:thread-(\d+)-|tid=(\d+))")
 TIME_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
 DEFAULT_LIMIT = 15
+AUTO_PARSE_COOLDOWN_SEC = 60
+
+logger = logging.getLogger("yamibo")
 
 FORWARD_CHUNK = 100  # 合并转发单批节点数上限；订阅与漫画共用
 PLAIN_BATCH_BUDGET = 8000  # 订阅直发单条消息字符预算：合并超出则按楼拆批（防平台长度限制导致必然失败）
@@ -271,6 +279,132 @@ def parse_tid_input(raw: str) -> int | None:
         if m:
             return int(m.group(1) or m.group(2))
     return None
+
+
+def extract_yamibo_tids(text: str) -> list[int]:
+    """仅提取论坛完整帖子 URL，保留出现顺序并按 tid 去重。"""
+    tids = []
+    for match in re.finditer(r"https?://[^\s<>\"'，。！？；、（）【】]+", unescape(text or ""), re.I):
+        try:
+            url = urlsplit(match.group().rstrip(").,;!]}"))
+            if url.hostname != "bbs.yamibo.com" or url.username or url.password or url.port:
+                continue
+            pretty = re.fullmatch(r"/thread-([0-9]+)-[0-9]+-[0-9]+\.html", url.path)
+            query = parse_qs(url.query)
+            if pretty:
+                raw = pretty.group(1)
+            elif url.path == "/forum.php" and query.get("mod") == ["viewthread"]:
+                values = query.get("tid", [])
+                raw = values[0] if len(values) == 1 else ""
+            else:
+                continue
+            if re.fullmatch(r"[0-9]{1,18}", raw) and int(raw) > 0 and int(raw) not in tids:
+                tids.append(int(raw))
+        except ValueError:
+            continue
+    return tids
+
+
+def is_comic_thread(html: str) -> bool:
+    """按导航中真实版块（含父版块）分类，忽略帖子标题及正文中的「漫画」。"""
+    soup = BeautifulSoup(html, "html.parser")
+    forum_names = []
+    for link in soup.select("#pt a[href]"):
+        try:
+            url = urlsplit(link["href"])
+            if url.scheme not in ("", "http", "https") or url.netloc not in ("", "bbs.yamibo.com"):
+                continue
+            query = parse_qs(url.query)
+            path = url.path.lstrip("/")
+            if re.fullmatch(r"forum-[0-9]+-[0-9]+\.html", path) or (
+                path == "forum.php" and query.get("mod") == ["forumdisplay"]
+                and re.fullmatch(r"[0-9]+", query.get("fid", [""])[0])
+            ):
+                forum_names.append(link.get_text(strip=True))
+        except ValueError:
+            continue
+    return any("漫画" in name or "漫畫" in name for name in forum_names)
+
+
+@dataclass
+class AutoLinkPreview:
+    """群链接的一条轻量预览，不生成 PDF/ZIP 或合并转发。"""
+
+    text: str
+    images: list[str] = field(default_factory=list)
+
+
+def build_auto_preview(html: str, tid: int, config: dict) -> AutoLinkPreview | None:
+    """自动预览只读 auto_parse 配置；主楼隐藏内容始终跳过。"""
+    comic = is_comic_thread(html)
+    # 自动预览还排除正文外的隐藏附件，避免附件扫描重新带回受限图片。
+    soup = BeautifulSoup(html, "html.parser")
+    for locked in soup.select("#postlist .locked, #postlist blockquote[class*=lock]"):
+        locked.decompose()
+    thread = parse_thread(str(soup), tid, skip_hidden=True)
+    if not thread.floors:
+        logger.warning("yamibo auto parse skipped: tid=%s, post unavailable", tid)
+        return None
+    # Discuz 有时省略主楼编号（解析为 0），但不能把二楼当成主楼预览。
+    first = next((floor for floor in thread.floors if floor.is_op), None)
+    if first is None and thread.floors[0].floor == 0:
+        first = thread.floors[0]
+    title = f"【{thread.title.strip() or f'帖子 {tid}'}】"
+    if first is None:
+        return AutoLinkPreview(title)
+    if comic:
+        return AutoLinkPreview(title, first.images[:1])
+    length = clamp_int(cfg_get(config, "auto_parse.novel.text_max_len", 50), 0, 500, 50)
+    body = " ".join(first.text.split())
+    if not body or not length:
+        return AutoLinkPreview(title)
+    summary = body[:length] + ("…" if len(body) > length else "")
+    return AutoLinkPreview(f"{title}\n{summary}")
+
+
+def should_auto_parse(event, config) -> bool:
+    """无副作用的入口过滤，关闭时不唤醒 AstrBot 消息流程。"""
+    if not cfg_get(config, "auto_parse.enable", False) or not event.get_group_id():
+        return False
+    whitelist = cfg_get(config, "auto_parse.group_whitelist", [])
+    if not isinstance(whitelist, list):
+        return False
+    groups = {str(group).strip() for group in whitelist if str(group).strip()}
+    if groups and str(event.get_group_id()).strip() not in groups:
+        return False
+    if str(event.get_sender_id()) == str(event.get_self_id()):
+        return False
+    text = event.get_message_str()
+    # AstrBot 会去掉唤醒前缀；同时覆盖未剥离 / 的命令和 @ 机器人命令。
+    if re.match(r"^\s*/?yamibo(?:\s|$)", text, re.I):
+        return False
+    if event.get_extra("handlers_parsed_params", {}):
+        return False
+    return bool(extract_yamibo_tids(text))
+
+
+async def auto_parse_group_links(event, config, state: dict, client):
+    """群聊自动入口；独立冷却、配置和预览，不调用手动命令。"""
+    if client is None or not should_auto_parse(event, config):
+        return
+    tids = extract_yamibo_tids(event.get_message_str())
+    # 群开启独立用户会话时，仍以平台实例 + 群号共享冷却。
+    key = f"auto:{event.unified_msg_origin.split(':', 1)[0]}:{event.get_group_id()}"
+    if not cooldown_ok(state, key, AUTO_PARSE_COOLDOWN_SEC):
+        return
+    # 固定只尝试消息中的第一个帖子，避免群聊刷屏。
+    tid = tids[0]
+    try:
+        html = await client.get_text(f"/forum.php?mod=viewthread&tid={tid}")
+        if not client.is_logged_in(html):
+            logger.warning("yamibo auto parse skipped: tid=%s, login expired", tid)
+            return
+        preview = build_auto_preview(html, tid, config)
+    except Exception as e:
+        logger.error("yamibo auto parse failed: tid=%s, error_type=%s", tid, type(e).__name__)
+        return
+    if preview is not None:
+        yield preview
 
 
 def cooldown_ok(state: dict, key: str, seconds: int, *, now: float | None = None) -> bool:

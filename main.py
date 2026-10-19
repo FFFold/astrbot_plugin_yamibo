@@ -27,6 +27,7 @@ from yamibo.utils import (
     FORUM_NAMES,
     AsyncLockRegistry,
     SubPushPayload,
+    auto_parse_group_links,
     build_push_chain,
     cfg_get,
     clamp_int,
@@ -37,6 +38,7 @@ from yamibo.utils import (
     parse_tid_input,
     resolve_comic_workdir,
     resolve_fid,
+    should_auto_parse,
 )
 
 DEFAULT_UA = (
@@ -45,10 +47,19 @@ DEFAULT_UA = (
 )
 
 
+class _GroupLinkFilter(filter.CustomFilter):
+    # 装饰器先于插件实例创建；初始化时绑定同一配置对象，重载配置仍可即时读取。
+    plugin_config: dict = {}
+
+    def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
+        return should_auto_parse(event, self.plugin_config)
+
+
 class AstrBotPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        _GroupLinkFilter.plugin_config = config
         self.client: ForumClient | None = None
         self.subscriber = Subscriber(_AstrBotKVStore(self))
         self.scheduler: Scheduler | None = None
@@ -231,6 +242,22 @@ class AstrBotPlugin(Star):
             yield event.plain_result(f"校验失败: {e}")
 
     # ---- 指令：公开 ----
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    @filter.custom_filter(_GroupLinkFilter)
+    async def auto_parse_links(self, event: AstrMessageEvent):
+        """按自动解析独立配置发送标题、首图或短摘要。"""
+        import astrbot.api.message_components as Comp
+
+        try:
+            async for preview in auto_parse_group_links(event, self.config, self._cool, self.client):
+                result = event.chain_result(build_push_chain(preview.text, preview.images, Comp))
+                if cfg_get(self.config, "auto_parse.bypass_reply_quote", False):
+                    await event.send(result)
+                else:
+                    yield result
+        except Exception as e:
+            logger.error("yamibo auto parse error: error_type=%s", type(e).__name__)
+
     @yamibo.command("热帖")
     async def hot_now(self, event: AstrMessageEvent, n: int = 10):
         """今日热度榜。"""
@@ -549,6 +576,8 @@ class AstrBotPlugin(Star):
         yield event.plain_result(text)
 
     async def terminate(self):
+        if _GroupLinkFilter.plugin_config is self.config:
+            _GroupLinkFilter.plugin_config = {}
         if self.scheduler:
             await self.scheduler.stop()
         if self.client:

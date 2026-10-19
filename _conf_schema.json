@@ -109,6 +109,42 @@
       }
     }
   },
+  "auto_parse": {
+    "description": "群聊链接自动解析",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用群聊链接自动解析",
+        "hint": "群内发送百合会帖子完整链接时自动预览，无需 @ 或命令；关闭后仍可手动执行 /yamibo 帖子、/yamibo 漫画",
+        "type": "bool",
+        "default": false
+      },
+      "bypass_reply_quote": {
+        "description": "跳过引用回复",
+        "hint": "直接发送自动预览，跳过 AstrBot 的回复处理（含引用、@ 和回复前缀）；关闭后跟随 AstrBot 的全局设置",
+        "type": "bool",
+        "default": false
+      },
+      "group_whitelist": {
+        "description": "群聊白名单（可选）",
+        "hint": "填写允许自动解析的群号，每项一个；留空表示所有群，不影响手动命令",
+        "type": "list",
+        "default": []
+      },
+      "novel": {
+        "description": "小说及普通帖子预览",
+        "type": "object",
+        "items": {
+          "text_max_len": {
+            "description": "正文预览字数",
+            "hint": "小说及普通帖子最多预览的正文字数，0~500，默认 50；0 表示只发标题，超出时添加省略号，隐藏内容始终跳过",
+            "type": "int",
+            "default": 50
+          }
+        }
+      }
+    }
+  },
   "subscription": {
     "description": "帖子订阅",
     "type": "object",
