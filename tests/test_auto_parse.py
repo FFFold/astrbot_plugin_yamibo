@@ -47,6 +47,13 @@ def test_deduplicate_by_tid_in_order():
     assert extract_yamibo_tids(text) == [123, 456]
 
 
+@pytest.mark.parametrize("suffix", ["好看", "」", "”", "：", "…", "👍"])
+def test_link_stops_before_cjk_and_fullwidth_punctuation(suffix):
+    # 中文用户常不打空格，或把链接包在「」/“” 里；URL 后面紧跟非 ASCII 字符不能吞掉链接。
+    assert extract_yamibo_tids(f"看这个{URL}{suffix}") == [123]
+    assert extract_yamibo_tids(f"「{URL}」") == [123]
+
+
 def test_classification_uses_navigation_only():
     assert is_comic_thread('<div id="pt"><a href="forum-30-1.html">中文百合漫画区</a></div>')
     assert is_comic_thread('<div id="pt"><a href="forum-31-1.html">漫畫區</a></div>')
@@ -270,6 +277,27 @@ def test_visible_attachment_as_first_image():
         '<div id="postmessage_100"></div><div class="pattl"><img src="https://img.test/attachment.jpg"></div>',
     )
     assert build_auto_preview(html, 123, {}) == AutoLinkPreview("【测试帖子】", ["https://img.test/attachment.jpg"])
+
+
+@pytest.mark.parametrize("comic", [True, False])
+def test_quoted_content_excluded_from_preview(comic):
+    body = (
+        '<div class="quote"><blockquote>引用的旧回复'
+        '<img src="https://img.test/quoted.jpg"></blockquote></div>'
+        '正文<img src="https://img.test/own.jpg">'
+    )
+    expected = (
+        AutoLinkPreview("【测试帖子】", ["https://img.test/own.jpg"])
+        if comic
+        else AutoLinkPreview("【测试帖子】\n正文")
+    )
+    assert build_auto_preview(page(comic=comic, body=body), 123, {}) == expected
+
+
+def test_long_quote_does_not_consume_excerpt():
+    body = '<div class="quote"><blockquote>' + "引用" * 30 + "</blockquote></div>正文"
+    config = {"auto_parse": {"novel": {"text_max_len": 10}}}
+    assert build_auto_preview(page(body=body), 123, config) == AutoLinkPreview("【测试帖子】\n正文")
 
 
 @pytest.mark.parametrize("comic", [True, False])

@@ -282,9 +282,13 @@ def parse_tid_input(raw: str) -> int | None:
 
 
 def extract_yamibo_tids(text: str) -> list[int]:
-    """仅提取论坛完整帖子 URL，保留出现顺序并按 tid 去重。"""
+    """仅提取论坛完整帖子 URL，保留出现顺序并按 tid 去重。
+
+    URL 在主站只含 ASCII；匹配到非 ASCII 字符即停止，避免中文或全角标点
+    紧跟链接时（如「链接好看」「链接」」）把后缀吞进 path 导致整条链接丢失。
+    """
     tids = []
-    for match in re.finditer(r"https?://[^\s<>\"'，。！？；、（）【】]+", unescape(text or ""), re.I):
+    for match in re.finditer(r"(?i:https?)://[^\s<>\"'\u0080-\U0010ffff]+", unescape(text or "")):
         try:
             url = urlsplit(match.group().rstrip(").,;!]}"))
             if url.hostname != "bbs.yamibo.com" or url.username or url.password or url.port:
@@ -341,6 +345,9 @@ def build_auto_preview(html: str, tid: int, config: dict) -> AutoLinkPreview | N
     soup = BeautifulSoup(html, "html.parser")
     for locked in soup.select("#postlist .locked, #postlist blockquote[class*=lock]"):
         locked.decompose()
+    # 普通引用块不属于楼主正文：长引用会挤占摘要字数，引用里的图片也不应成为首图。
+    for quoted in soup.select("#postlist .quote, #postlist blockquote.quote"):
+        quoted.decompose()
     thread = parse_thread(str(soup), tid, skip_hidden=True)
     if not thread.floors:
         logger.warning("yamibo auto parse skipped: tid=%s, post unavailable", tid)
