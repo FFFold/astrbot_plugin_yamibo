@@ -159,7 +159,7 @@ class AstrBotPlugin(Star):
         await self.context.send_message(umo, chain)
 
     # ---- 指令：签到（管理员） ----
-    @filter.command_group("yamibo")
+    @filter.command_group("yamibo", alias={"百合会"})
     def yamibo(self):
         pass
 
@@ -547,6 +547,7 @@ class AstrBotPlugin(Star):
         """使用说明。"""
         text = (
             "【百合会助手】使用说明\n"
+            "指令前缀 /yamibo 或 /百合会，两者等效\n"
             "参数用空格分隔：<> 必填，[] 可选\n"
             "\n"
             "【帖子与漫画】\n"
